@@ -1,0 +1,1073 @@
+---
+title: "Analysis script for TITLE OF PAPER"
+output: html_notebook
+---
+##1. SETUP
+```{r}
+options(scipen = 999)
+
+## 1. Load packages
+library(weights)
+library(eyetrackingR)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(broom)
+library(corrr)
+library(forcats)
+library(ez)
+library(dplyr)
+library(ggpubr)
+library(tidylog)
+library(janitor)
+library(here)
+library(patchwork)
+library(sjPlot)
+library(car)
+library(metafor)
+
+library(effectsize)
+
+```
+#1.1. Load dataset
+```{r}
+load(here("data/data_ready_for_analysis.Rda"))
+dataset_original <- dataset
+dataset <- dataset %>%
+  mutate(trial_lang = case_when(trial_lang == "best" ~ "most_familiar",
+                                trial_lang == "non-best" ~ "least_familiar")) %>%
+  rename(familiarity = trial_lang) %>%
+  select(-gender_coded)
+                                #Load full data file
+
+data_keepers_trad <- dataset %>% filter(keeper_traditional == 1)
+
+```
+##PARTICIPANTS EXCLUSION
+#1.2. Checking participants who can be kept (keepers)
+```{r}
+participants <- read_csv(here("data", "participant_data.csv")) %>% 
+  filter(!is.na(baby_id)) #288 total
+```
+#1.2.1. Counting number of excluded participants and the reason for exclusion
+```{r}
+participants %>%
+  mutate(excl = word(reason_exclusion)) %>%
+  count(excl) #NAs should equal 130
+
+```
+#1.3 Excluding participants who do not meet language criteria
+```{r}
+data_keepers_trad <- data_keepers_trad %>%
+  mutate(lang_ok = case_when(lang_group == "bilingual_freng" & ((per_eng >= 25 & per_fr >= 50) | (per_eng >= 50 & per_fr >= 25)) & per_other <= 20 ~ 1,
+                             intended_study == "Novel_14" & lang_group == "bilingual_other_dom" & (per_eng >= 50 | per_fr >= 50) & per_other >= 25 & (per_eng <= 5 | per_fr <= 5) ~ 1,
+                             intended_study == "Novel_14" & lang_group == "bilingual_other_nondom" & per_other >= 50 & (per_eng >= 25 | per_fr >= 25) & (per_eng <= 5 | per_fr <= 5) ~ 1,
+                             lang_group == "monolingual" & (per_eng >= 90 | per_fr >= 90) ~ 1,
+                             TRUE ~ 0)) %>% # 44 participants don't meet language criteria
+filter(lang_ok == 1)
+
+```
+#1.4 Exclude a few trials with eyetracker technical difficulties (Tobii lagged)
+
+```{r}
+data_keepers_trad <- data_keepers_trad %>%
+  ungroup() %>%
+  group_by(id, recording_number, trial_number) %>%
+  mutate(trial_from_zero = recording_timestamp - min(recording_timestamp),
+         group = case_when(str_detect(lang_group, "bilingual") ~ "Bilinguals",
+                           str_detect(lang_group, "monolingual") ~ "Monolinguals")) %>%
+  ungroup() %>%
+  filter(id != "NovelDom_14_S09" & id != "NovelDom_14_S11") %>% # exclude these trials due to technical difficulties
+  mutate(exclude = case_when(id == "Novel_14_S124" & trial_number == 6 ~ TRUE, #remove these trials
+                             id == "Novel_14_S89" & trial_number == 4 ~ TRUE,
+                             id == "Novel_14_S136" & trial_number == 17 ~ TRUE,
+                             id == "NovelDom_14_S09" & trial_number == 20 ~ TRUE,
+                             id == "NovelDom14_S26_43142" & trial_number == 18 ~ TRUE,
+                             TRUE ~ FALSE)) %>%
+  filter(exclude != TRUE)
+
+```
+
+##2. PREPARE DATA FOR ANALYSES
+
+#2.1. Create variable "condition" where dual_lang means the stimuli were presented in 2 languages and single_lang the stimuli were presented only in 1 language
+```{r}
+data_keepers_trad$stimulus_set <- as.factor(data_keepers_trad$stimulus_set)
+
+data_keepers_trad <- data_keepers_trad %>%
+  mutate(condition = ifelse(stimulus_set == "Foreign_14"| stimulus_set == "Foreign_14_Feb2018", "single_lang", "dual_lang"),
+         condition_language = case_when(str_detect(study_order, "E") ~ "english",
+                                        str_detect(study_order, "F") ~ "french",
+                                        TRUE ~ "bilingual")) %>%
+  mutate(condition = case_when(condition_language == dom_lang ~ "single_lang_native",
+                               condition_language == "bilingual" ~ "dual_lang",
+                               TRUE ~ "single_lang_foreign"),
+         trad_analysis_group = paste0(lang_group, "_", condition),
+         experiment = case_when(trad_analysis_group == "bilingual_freng_dual_lang" ~ "experiment_1",
+                                trad_analysis_group == "bilingual_other_dom_dual_lang" ~ "experiment_2",
+                                trad_analysis_group == "bilingual_other_nondom_dual_lang" ~ "experiment_3",
+                                trad_analysis_group == "monolingual_dual_lang" ~ "experiment_4",
+                                trad_analysis_group == "bilingual_freng_single_lang_native" ~ "experiment_5",
+                                trad_analysis_group == "monolingual_single_lang_native" ~ "experiment_6",
+                                trad_analysis_group == "monolingual_single_lang_foreign" ~ "experiment_7")) %>%
+  group_by(study_order) %>%
+  mutate(first_word_presented_training = case_when(trial_number == 1 ~ target_word,
+                                                   TRUE ~ NA_character_)) %>%
+  fill(first_word_presented_training) %>%
+  ungroup()
+
+data_keepers_trad %>% count(condition) #No NAs
+data_keepers_trad %>% count(experiment, trad_analysis_group) #7 groups (1 per experiment)
+
+```
+#2.2. Create variable "stimulus_to_baby" depending on whether the stimuli is in the infant's dominant language, non-dominant or in a foreign language
+```{r}
+data_keepers_trad <- data_keepers_trad %>% 
+    mutate(stimulus_to_baby = case_when(
+      carrier_language == dom_lang ~ "dominant",
+      carrier_language != dom_lang & lang_group == "monolingual" ~ "foreign",
+      dom_lang == "other" & best_lang == carrier_language ~ "nondominant",
+      dom_lang == "other" & best_lang != carrier_language ~ "foreign",
+      lang_group == "bilingual_freng" & carrier_language != dom_lang ~ "nondominant",
+      lang_group == "bilingual_other_dom" & carrier_language != dom_lang ~ "foreign",
+      TRUE ~ "other")) %>%
+  group_by(id, recording_number, trial_number) %>%
+      mutate(trial_from_zero = recording_timestamp - min(recording_timestamp)) %>%
+  ungroup()
+
+#check counts
+data_keepers_trad %>% count(stimulus_to_baby)
+
+```
+#2.3.  Create dataset for each type of trial (training and test)
+```{r}
+data_keepers_trad_test <- data_keepers_trad %>%
+  filter(trial_type == 'test')
+
+data_keepers_trad_training <- data_keepers_trad %>%
+  filter(trial_type == 'training')
+```
+#2.4.1. Create dataframe for training
+```{r}
+data_keepers_trad_training <- make_eyetrackingr_data(data_keepers_trad_training,
+                               participant_column = "id",
+                               trial_column = "trial_number",
+                               time_column = "trial_from_zero",
+                               trackloss_column = "trackloss",
+                               aoi_columns = c('training_AOI', 'training_away_AOI'),
+                               treat_non_aoi_looks_as_missing = FALSE)
+
+```
+#2.4.2. Create dataframe for test
+```{r}
+data_keepers_trad_test <- make_eyetrackingr_data(data_keepers_trad_test,
+                               participant_column = "id",
+                               trial_column = "trial_number",
+                               time_column = "trial_from_zero",
+                               trackloss_column = "trackloss",
+                               aoi_columns = c('target_AOI', 'distractor_AOI'),
+                               treat_non_aoi_looks_as_missing = TRUE)
+
+```
+##2.5. Create dataframe within window of analysis
+#2.5.1. Create dataframe that is only data within window of analysis for training
+```{r}
+response_window_training_trad <- subset_by_window(data_keepers_trad_training, 
+                                    window_start_time = 1700, #200ms after onset of initial carrier phrase, which lasts 1500 ms
+                                    window_end_time = 11000, #End of trial. Approx. 11 seconds
+                                    rezero = FALSE)
+
+```
+#2.5.2. Create dataframe that is only data within window of analysis for test
+```{r}
+response_window_test_trad <- subset_by_window(data_keepers_trad_test, 
+                                    window_start_time = 3200, #3200ms after noun onset
+                                    window_end_time = 10000, #End of trial. Approx. 10 seconds
+                                    rezero = FALSE)
+
+```
+##2.6. Trackloss
+#2.6.1. Getting rid of rows with trackloss within window of analysis for test
+```{r trackloss}
+trackloss_test_trad <- trackloss_analysis(response_window_test_trad)
+
+response_window_test_trad <- clean_by_trackloss(data = response_window_test_trad,
+                                   trial_prop_thresh = (1 - 750/(10000 - 3200))) # Need at least 750ms looking = 750/(10000 - 3200) divide by trial length
+
+130 - n_distinct(response_window_test_trad$id) #number of participants excluded due to trackloss
+
+```
+#2.7. Checking if there are participants with fewer than two trials for test
+```{r describe_data_by_participant}
+# keep participants who have at least 1 trial for each word
+
+data_test_trad <- response_window_test_trad %>%
+  group_by(id) %>%
+  mutate(num_words = n_distinct(target_word)) %>% 
+  filter(num_words == 2)
+
+
+length(unique(data_test_trad$id)) #final sample size for traditional analysis
+
+length(unique(response_window_test_trad$id)) - length(unique(data_test_trad$id)) #number of participants excluded because they don't have data for both words for test
+```
+## DESCRIPTIVES
+
+```{r descriptives}
+
+final_sample_ids <- data_test_trad %>% select(id, experiment) %>% distinct() #110 participants
+
+final_sample <- final_sample_ids %>%
+  left_join(participants, by = c("id" = "recording_name"))
+  
+#age breakdown
+
+final_sample %>%
+  ungroup() %>%
+  select(id, gender_written, total_age_days_excel, lang_group, experiment) %>%
+  distinct() %>%
+  mutate(lang_group = case_when(str_detect(lang_group, "other") ~"bilingual_other",
+                                TRUE ~ lang_group)) %>%
+  group_by(lang_group) %>%
+  summarize(count = length(unique(id)),
+            avg_age_days = floor(mean(total_age_days_excel, na.rm = TRUE)),
+            sd_age_days = (sd(total_age_days_excel, na.rm = TRUE)),
+            min_age_days = min(total_age_days_excel),
+            max_age_days = max(total_age_days_excel),
+            avg_age = avg_age_days/30.436875, #divide by average days in a month
+            avg_months = floor(avg_age),
+            avg_days = floor((avg_age - avg_months) * 30.436875),
+            min_age = min_age_days/30.436875,
+            min_months = floor(min_age),
+            min_days = floor((min_age - min_months) * 30.436875),
+            max_age = max_age_days/30.436875,
+            max_months = floor(max_age),
+            max_days = floor((max_age - max_months) * 30.436875),            
+            num_female = sum(gender_written == "female")) %>%
+  select(-avg_age_days, -min_age_days, -max_age_days, -avg_age, -min_age, -max_age)
+
+
+#average exposure to each language per experimental group
+
+final_sample %>%
+  ungroup() %>%
+  select(id, lang_group, dom_lang, best_lang, per_eng, per_fr, per_other) %>%
+  distinct() %>%
+  group_by(lang_group, dom_lang) %>%
+  summarize(per_en = mean(per_eng, na.rm = TRUE),
+            num = length(unique(id)),
+            per_fr = mean(per_fr, na.rm = TRUE),
+            per_other = mean(per_other, na.rm = TRUE)) %>%
+  mutate(per_en_and_fr = per_en + per_fr)
+
+# total number of participants per experimental group
+final_sample %>%
+  group_by(experiment) %>%
+  summarize(n = length(unique(id)))
+
+# total number of participants by gender per experimental group
+final_sample %>%
+  group_by(experiment, gender_written) %>%
+  summarize(n = length(unique(id))) %>%
+  filter(gender_written == "female")
+
+```
+
+
+##3. PLANNED ANALYSES
+
+#3.1. Run descriptives and t-tests for each word by language group depending on condition (dual_lang vs. single_lang condition)
+```{r}
+
+#do t-test on dual language condition to see if any difference between looking time depending on stimulus language
+response_window_training_trad %>%
+  filter(condition == "dual_lang" & id %in% final_sample_ids$id) %>%
+  group_by(id, target_word, condition, lang_group, trial_number, familiarity, experiment) %>%
+  summarize(trial_length = length(id),
+            looking_at_target = sum(training_AOI == TRUE, na.rm = TRUE),
+            mean_looking_at_target = mean(training_AOI == TRUE, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(trial_length_ms = trial_length * (1000/60),
+         looking_time_ms = looking_at_target * (1000/60)) %>%
+  group_by(id, lang_group, condition, familiarity, experiment) %>%
+  summarize(trial_time = sum(trial_length_ms),
+            looking_time = sum(looking_time_ms))%>%
+  group_by(lang_group) %>%
+  do(broom::tidy(t.test(.$looking_time ~ .$familiarity, data = ., paired = TRUE))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1))
+
+#Group means
+response_window_training_trad %>%
+  filter(condition == "dual_lang" & id %in% final_sample_ids$id) %>%
+  group_by(id, target_word, condition, lang_group, trial_number, familiarity, experiment) %>%
+  summarize(trial_length = length(id),
+            looking_at_target = sum(training_AOI == TRUE, na.rm = TRUE),
+            mean_looking_at_target = mean(training_AOI == TRUE, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(trial_length_ms = trial_length * (1000/60),
+         looking_time_ms = looking_at_target * (1000/60)) %>%
+  group_by(id, lang_group, condition, familiarity, experiment) %>%
+  summarize(trial_time = sum(trial_length_ms),
+            looking_time = sum(looking_time_ms)) %>%
+  group_by(lang_group, condition, familiarity, experiment) %>%
+  summarize(trial_time_s = mean(trial_time, na.rm = TRUE)/1000,
+            sd_trial_time_s = sd(trial_time, na.rm = TRUE)/1000,
+            looking_time_s = mean(looking_time, na.rm = TRUE)/1000,
+            sd_looking_time_s = sd(looking_time, na.rm = TRUE)/1000)
+
+```
+#3.2. Create dataframe for analyses testing
+```{r}
+data_test_participant_summary_trad <- describe_data(data_test_trad, 
+                describe_column = "target_AOI", 
+                group_columns = c("id", "lang_group", "familiarity", "trial_type", "target_word", "best_lang", "per_carrier_lang", "condition", "stimulus_to_baby", "trad_analysis_group", "first_word_presented_training", "experiment")) %>%
+  mutate(total_ms = (1000/60)*N) %>%
+  mutate(looking_ms = total_ms * Mean) %>%
+  arrange(lang_group)
+
+data_test_participant_summary_trad_single_lang <- describe_data(data_test_trad, 
+                describe_column = "target_AOI", 
+                group_columns = c("id", "lang_group", "familiarity", "trial_type", "best_lang", "per_carrier_lang", "condition", "stimulus_to_baby", "trad_analysis_group", "first_word_presented_training", "experiment")) %>%
+  mutate(total_ms = (1000/60)*N) %>%
+  mutate(looking_ms = total_ms * Mean) %>%
+  arrange(lang_group) %>%
+  filter(condition != "dual_lang")
+
+length(unique(data_test_participant_summary_trad$id))
+
+```
+#3.3. Main analyses - T-test
+#3.3.1. Get trial-level data for test
+```{r}
+
+data_test_prop_looking_by_trial_trad <- make_time_window_data(data_test_trad, 
+                                                    aois = "target_AOI",
+                                                    predictor_columns=c("lang_group", "familiarity", "trial_type", "trial_number_of_type", "per_carrier_lang", "condition", "trad_analysis_group", "target_word", "stimulus_to_baby", "first_word_presented_training"),
+                                                    summarize_by = c("id", "trial_number"),
+                                                    other_dv_columns = c("pupil_left", "pupil_right")) 
+```
+#3.3.2. Describe data by group for test
+```{r}
+#Aggregate by subject across response window. 
+data_test_prop_looking_by_word_trad <- make_time_window_data(data_test_trad, 
+                                                    aois = "target_AOI",
+                                                    predictor_columns = c("lang_group", "familiarity", "trial_type", "trial_number_of_type", "per_carrier_lang", "condition", "trad_analysis_group", "target_word", "stimulus_to_baby", "first_word_presented_training", "experiment"),
+                                                    summarize_by = "id",
+                                                    other_dv_columns = c("pupil_left", "pupil_right")) %>%
+  group_by(id, lang_group, familiarity, trial_type, target_word, stimulus_to_baby, trad_analysis_group, condition, experiment) %>%
+  summarize(Prop = mean(Prop))
+
+
+data_test_participant_summary_trad %>%
+  group_by(trad_analysis_group, familiarity, stimulus_to_baby, condition, experiment) %>%
+  summarise(target.mean = mean(Mean), target.sd = sd(Mean), n = length(unique(id)))
+
+#means by word for single-lang condition
+data_test_participant_summary_trad %>%
+  filter(str_detect(condition, "single_lang")) %>%
+  group_by(trad_analysis_group, familiarity, stimulus_to_baby, condition, target_word, experiment) %>%
+  summarise(target.mean = mean(Mean), target.sd = sd(Mean), n = length(unique(id)))
+
+
+#Checking how many participants there are per language group
+data_test_participant_summary_trad %>% ungroup() %>% select(id, trad_analysis_group, condition, experiment) %>% distinct() %>% count(trad_analysis_group, condition, experiment)
+
+```
+#3.3.3. Run t-tests against chance for each language group in each condition
+```{r}
+data_test_participant_summary_trad %>%
+  filter(condition == "dual_lang") %>% 
+  group_by(trad_analysis_group, familiarity, condition, experiment) %>%
+  do(broom::tidy(t.test(.$Mean, mu = .5, data = .))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+
+data_test_participant_summary_trad_single_lang %>%
+  filter(condition != "dual_lang") %>% 
+  group_by(trad_analysis_group, condition, familiarity, experiment) %>%
+  do(broom::tidy(t.test(.$Mean , mu = .5, data = .))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+
+```
+
+##4.GRAPHS
+
+#4.1. Graph dual language condition
+```{r}
+
+response_window_by_trial_trad_bilingual <- data_test_prop_looking_by_trial_trad %>%
+  mutate(x_labels = case_when(lang_group == "bilingual_freng" ~ "Experiment 1",
+                              lang_group == "bilingual_other_dom" ~ "Experiment 2",
+                              lang_group == "bilingual_other_nondom" ~ "Experiment 3",
+                              lang_group == "monolingual" ~ "Experiment 4")) %>%
+  mutate(x_labels = fct_reorder(x_labels, Prop),
+         familiarity = case_when(stimulus_to_baby == "dominant" ~ "most familiar",
+                                 stimulus_to_baby == "foreign" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_freng" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_other_nondom" ~ "most familiar"))
+
+data_test_summarized_bilingual <- data_test_prop_looking_by_trial_trad %>% 
+  filter(condition == "dual_lang") %>% 
+  group_by(lang_group, stimulus_to_baby) %>% 
+  summarise(SD = sd(Prop), Prop = mean(Prop), n = length(unique(id))) %>% # Get all the means
+  mutate(SE = SD/sqrt(n),
+         x_labels = case_when(lang_group == "bilingual_freng" ~ "Experiment 1",
+                              lang_group == "bilingual_other_dom" ~ "Experiment 2",
+                              lang_group == "bilingual_other_nondom" ~ "Experiment 3",
+                              lang_group == "monolingual" ~ "Experiment 4")) %>%
+  mutate(x_colors = case_when(x_labels == "Experiment 1" ~ "#3796A2",
+                              x_labels == "Experiment 2" ~ "#D7585D", 
+                              x_labels == "Experiment 3" ~ "#E69F00", 
+                              x_labels == "Experiment 4" ~ "#3C6DB2"),
+         familiarity = case_when(stimulus_to_baby == "dominant" ~ "most familiar",
+                                 stimulus_to_baby == "foreign" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_freng" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_other_nondom" ~ "most familiar"))
+
+sig_text <- tibble(x_labels = "Experiment 4", y = 0.75, familiarity = "least familiar")
+
+ggplot(data = data_test_summarized_bilingual, aes(x=x_labels, y=Prop, width=0.5)) +
+  geom_col(aes(fill = x_colors)) +
+ geom_errorbar(aes(ymin = Prop - SE, ymax = Prop + SE), width=0.2,position=position_dodge(.9), color = "black") + 
+ ylab("Proportion Looking to correct object") +
+ xlab("Language Group") + 
+ ggtitle("Proportion looking to the correct object in the Test phase \n(dual-language condition)")+
+ geom_hline(yintercept = .5,linetype="dashed", color = "black", size = 1.5)+ 
+ geom_label(aes(label=paste("n =", n), y = 0.05), size = 5, label.size = 0, alpha = 0) +
+ geom_text(data = sig_text, aes(y = y), label = "**\n.006", hjust = .5, size = 4) +
+ ylim(0.4,0.8)+
+ coord_cartesian(ylim=c(0,1))+
+ scale_y_continuous(expand = c(0, 0)) +
+ scale_fill_manual(values = c("#3796A2", "#D7585D", "#E69F00", "#3C6DB2")) +
+ facet_grid(. ~ fct_rev(familiarity), scales = "free", space = "free") +
+ theme_bw(base_size=18)+ 
+ theme(legend.position="none")+
+ theme(axis.text.x = element_text(size=13), plot.title = element_text(hjust = 0.5))+
+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+
+#ggsave(here("figures/dual_lang_condition.png"), width = 15)
+
+```
+
+##4.2. Graph single language condition
+```{r}
+response_window_by_trial_trad <- data_test_prop_looking_by_trial_trad %>%
+  mutate(x_labels = case_when(lang_group == "bilingual_freng" ~ "Experiment 5",
+                              trad_analysis_group == "monolingual_one_lang_foreign" ~ "Experiment 7",
+                              trad_analysis_group == "monolingual_one_lang_native" ~ "Experiment 6",
+                              TRUE ~ NA_character_)) %>%
+  mutate(x_labels = factor(x_labels, levels = c("Experiment 5", "Experiment 6", "Experiment 7")))
+
+
+
+data_test_summarized_mono <- data_test_prop_looking_by_trial_trad %>% 
+  filter(str_detect(condition, "single_lang")) %>%  
+  group_by(trad_analysis_group, lang_group, stimulus_to_baby) %>% 
+  summarise(SD = sd(Prop), Prop = mean(Prop), n = length(unique(id))) %>% # Get all the means
+  mutate(SE = SD/sqrt(n),
+         x_labels = case_when(lang_group == "bilingual_freng" ~ "Experiment 5",
+                              trad_analysis_group == "monolingual_single_lang_foreign" ~ "Experiment 7",
+                              trad_analysis_group == "monolingual_single_lang_native" ~ "Experiment 6",
+                              TRUE ~ NA_character_),
+          familiarity = case_when(stimulus_to_baby == "dominant" ~ "most familiar",
+                                 stimulus_to_baby == "foreign" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_freng" ~ "least familiar",
+                                 stimulus_to_baby == "nondominant" & lang_group == "bilingual_other_nondom" ~ "most familiar"))
+
+# GRAPH SINGLE LANGUAGE CONDITION
+
+ggplot(data = data_test_summarized_mono, aes(x=x_labels,y=Prop, fill= x_labels, width=0.5)) + 
+  geom_bar(stat="identity", position="dodge")+
+  geom_text(aes(label=rd(Prop, digits = 2)), nudge_y = .125, size = 5) +
+  geom_text(aes(label=paste("n =", n), y = 0.05), size = 5) +
+ geom_errorbar(aes(ymin = Prop - SE, ymax = Prop + SE), width=0.2,position=position_dodge(.9), color = "black") + 
+ ylab("Proportion Looking to Target") +
+ xlab("Language Group") + 
+ ggtitle("Single-Language Condition")+
+ geom_hline(yintercept = .5,linetype="dashed", color = "black", size = 1.5)+ 
+ scale_fill_manual(values = c("#934289", "#ff910c", "#50874f")) +
+ facet_grid(~ fct_rev(familiarity), scales = "free", space = "free") +
+ coord_cartesian(ylim=c(0,1))+
+ scale_y_continuous(expand = c(0, 0)) +
+ theme_bw(base_size=18)+ 
+ theme(legend.position="none")+
+ theme(axis.text.x = element_text(size=12), plot.title = element_text(hjust = 0.5))+
+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+
+
+#ggsave(here("figures/single_language_condition.png"))
+
+```
+## 5. UPDATED ANALYSES
+
+The following analyses combine data from all (valid) participants in the study (*N* = 155), regardless of grouping characteristics (e.g., monolingual or bilingual), to investigate the effects of: 
+
+1. Percentage of exposure to the sentence frame languages;
+
+2. Vocabulary size on the sentence frame languages (comprehension);
+
+3. Overall looking to the objects during Training;
+
+On the **proportion of looking to the labeled object during Test**.
+
+***
+
+# A) Updated analysis
+
+5.1. Load dataset
+
+```{r}
+# full dataset
+
+data_lmer <- 
+  dataset_original %>% 
+  filter(keeper_new_analysis == 1) %>% #filter to only keepers for updated analysis
+  ungroup() %>%
+  group_by(id, recording_number, trial_number) %>%
+  mutate(trial_from_zero = recording_timestamp - min(recording_timestamp), #make every trial start at 0
+         group = case_when(str_detect(lang_group, "bilingual") ~ "Bilinguals",
+                           str_detect(lang_group, "monolingual") ~ "Monolinguals",
+                           str_detect(lang_group, "trilingual") ~ "Trilinguals")) %>%
+  ungroup() %>%
+  filter(id != "NovelDom_14_S09" & id != "NovelDom_14_S11") %>% #exclude trials with technical difficulties
+  mutate(exclude = case_when(id == "Novel_14_S124" & trial_number == 6 ~ TRUE, 
+                             id == "Novel_14_S89" & trial_number == 4 ~ TRUE,
+                             id == "Novel_14_S136" & trial_number == 17 ~ TRUE,
+                             id == "NovelDom_14_S09" & trial_number == 20 ~ TRUE,
+                             id == "NovelDom14_S26_43142" & trial_number == 18 ~ TRUE,
+                             TRUE ~ FALSE)) %>%
+  filter(exclude != TRUE) %>% #filter out standard exclusions
+  mutate(condition = ifelse(stimulus_set == "Foreign_14"| stimulus_set == "Foreign_14_Feb2018", "one_lang", "two_lang"),
+         condition_language = case_when(str_detect(study_order, "E") ~ "english",
+                                        str_detect(study_order, "F") ~ "french",
+                                        TRUE ~ "bilingual")) %>%
+  mutate(condition = case_when(condition_language == dom_lang ~ "one_lang_native",
+                               condition_language == "bilingual" ~ "two_lang",
+                               TRUE ~ "one_lang_foreign"),
+         analysis_group = paste0(lang_group, "_", condition)) %>%
+  mutate(stimulus_to_baby = case_when(
+    carrier_language == dom_lang ~ "dominant",
+    carrier_language != dom_lang & lang_group == "monolingual" ~ "foreign",
+    dom_lang == "other" & best_lang == carrier_language ~ "nondominant",
+    dom_lang == "other" & best_lang != carrier_language ~ "foreign",
+    lang_group == "bilingual_freng" & carrier_language != dom_lang ~ "nondominant",
+    lang_group == "bilingual_other_dom" & carrier_language != dom_lang ~ "foreign",
+    TRUE ~ "other"))
+
+# vocabulary info
+vocab_raw <- read.csv(here("data/vocabulary_data.csv"))
+vocab <- 
+  vocab_raw %>% 
+  select(recording_name, cdi_comp_eng, cdi_comp_fr, total_vocab_comp) %>% 
+  drop_na(recording_name) %>% 
+  rename(id = recording_name)
+
+## join vocab info and dataset
+data_lmer_vocab <- 
+  data_lmer %>% 
+  left_join(., vocab, by = "id")
+
+# datasets for training and test
+data_lmer_training <- data_lmer_vocab %>% filter(trial_type == "training")
+data_lmer_test <- data_lmer_vocab %>% filter(trial_type == "test")
+```
+## 5.2. Make eyetracking data
+
+### 5.2.1. Test
+
+```{r}
+# make eye-tracking data
+data_lmer_test_eye <- make_eyetrackingr_data(data = data_lmer_test,
+                                             participant_column = "id",
+                                             trial_column = "trial_number",
+                                             time_column = "trial_from_zero",
+                                             trackloss_column = "trackloss",
+                                             aoi_columns = c('target_AOI', 'distractor_AOI'),
+                                             treat_non_aoi_looks_as_missing = TRUE)
+
+data_lmer_test_eye %>% count(target_AOI, distractor_AOI, trackloss)
+
+# window of analysis
+data_lmer_test_eye_window <- subset_by_window(data = data_lmer_test_eye, 
+                                              window_start_time = 3200, #3200ms after noun onset
+                                              window_end_time = 10000, #End of trial. Approx. 10 seconds
+                                              rezero = FALSE)
+
+# clean by trackloss
+trackloss_analysis(data_lmer_test_eye_window)
+
+data_lmer_test_eye_window_clean <- clean_by_trackloss(data = data_lmer_test_eye_window,
+                                                      trial_prop_thresh = (1 - 750/(10000 - 3200))) # Need at least 750 ms of looking to the screen
+
+# Participants excluded due to trackloss
+n_distinct(data_lmer_test_eye_window$id) - n_distinct(data_lmer_test_eye_window_clean$id) # 8
+
+# final sample size for Test
+n_distinct(data_lmer_test_eye_window_clean$id) # 155 
+```
+### 5.2.2. Training
+
+```{r}
+# make eye-tracking data
+data_lmer_training_eye <- make_eyetrackingr_data(data = data_lmer_training,
+                                                 participant_column = "id",
+                                                 trial_column = "trial_number",
+                                                 time_column = "trial_from_zero",
+                                                 trackloss_column = "trackloss",
+                                                 aoi_columns = "training_AOI",
+                                                 treat_non_aoi_looks_as_missing = TRUE)
+
+data_lmer_training_eye %>% count(training_AOI, trackloss)
+
+# window of analysis
+data_lmer_training_eye_window <- subset_by_window(data = data_lmer_training_eye, 
+                                                  window_start_time = 3700, #3700ms after noun onset
+                                                  window_end_time = 11000, #End of trial. Approx. 11 seconds
+                                                  rezero = FALSE)
+
+# clean by trackloss
+trackloss_analysis(data_lmer_training_eye_window)
+
+data_lmer_training_eye_window_clean <- clean_by_trackloss(data = data_lmer_training_eye_window,
+                                                          trial_prop_thresh = (1 - 750/(11000 - 3700))) # Need at least 750 ms of looking to the screen
+
+# Participants excluded due to trackloss
+n_distinct(data_lmer_training_eye_window$id) - n_distinct(data_lmer_training_eye_window_clean$id) # 2
+
+# final sample size for Training
+n_distinct(data_lmer_training_eye_window_clean$id) # 161
+
+# summary of total looking time for each trial
+data_lmer_training_agg_id <- 
+  data_lmer_training_eye_window_clean %>% 
+  make_time_window_data(data = ., 
+                        aois = "training_AOI",
+                        predictor_columns = c("lang_group", "trial_lang", 
+                                              "best_lang",
+                                              "target_word"),
+                        summarize_by = "id") %>% 
+  mutate(looking_time = SamplesInAOI * 16.6) # assuming 60Hz
+
+## summary by participant only
+data_lmer_training_agg_id2 <- 
+  data_lmer_training_agg_id %>% 
+  group_by(id) %>% 
+  summarise(total_looking_time_training = mean(looking_time, na.rm = T))
+
+## join with test df
+data_lmer_test_eye_window_clean <-
+  data_lmer_test_eye_window_clean %>% 
+  left_join(., data_lmer_training_agg_id2, by = "id")
+```
+
+## 5.3. Aggregate data by participant
+
+Define variables (exposure, vocab) as a function of language familiarity.
+```{r}
+# aggregate data on id level (multiple trials per id)
+data_lmer_test_agg_id <- 
+  data_lmer_test_eye_window_clean %>% 
+  make_time_window_data(data = .,
+                        aois = "target_AOI",
+                        predictor_columns = c("lang_group", "trial_lang", "trial_type", 
+                                              "trial_number_of_type", "best_lang", "per_carrier_lang",
+                                              "condition", "target_word", "stimulus_to_baby",
+                                              "per_fr", "per_eng", 
+                                              "cdi_comp_eng", "cdi_comp_fr", "total_vocab_comp",
+                                              "total_looking_time_training"),   
+                        other_dv_columns = c("pupil_left", "pupil_right")) %>% 
+
+  mutate(per_exposure_target = case_when(trial_lang == "best" & best_lang == "french" ~ per_fr,
+                                         trial_lang == "best" & best_lang == "english" ~ per_eng,
+                                         trial_lang == "non-best" & best_lang == "french" ~ per_eng,
+                                         trial_lang == "non-best" & best_lang == "english" ~ per_fr,
+                                         TRUE ~ 0),
+         per_exposure_other = case_when(trial_lang == "best" & best_lang == "french" ~ per_eng,
+                                        trial_lang == "best" & best_lang == "english" ~ per_fr,
+                                        trial_lang == "non-best" & best_lang == "french" ~ per_fr,
+                                        trial_lang == "non-best" & best_lang == "english" ~ per_eng,
+                                        TRUE ~ 0),
+         vocab_target = case_when(trial_lang == "best" & best_lang == "french" ~ cdi_comp_fr,
+                                  trial_lang == "best" & best_lang == "english" ~ cdi_comp_eng,
+                                  trial_lang == "non-best" & best_lang == "french" ~ cdi_comp_eng,
+                                  trial_lang == "non-best" & best_lang == "english" ~ cdi_comp_fr,
+                                  TRUE ~ as.integer(0)),
+         vocab_target = case_when(is.na(vocab_target) ~ as.integer(0),
+                                  TRUE ~ vocab_target)
+         ) %>% 
+  mutate(trial_lang = as_factor(trial_lang))
+
+# final sample
+data_lmer_test_agg_id %>% distinct(id) %>% count() # 155 participants
+
+# distribution of proportion of looking
+hist(data_lmer_test_agg_id$Prop)
+```
+# 6. Visualizations
+
+1. Exposure to sentence frame languages (%);
+
+2. Vocabulary size (comprehension) in sentence frame languages (n);
+
+3. Total looking time during training (ms); 
+
+```{r}
+# Percentage of exposure to target (raw graph, 498 points)
+plot_perc <- 
+  data_lmer_test_agg_id %>% 
+  ggplot(aes(x = per_exposure_target, y = Prop)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  ylim(c(0, 1)) +
+  labs(x = "Exposure to sentence frame languages (%)",
+       y = "Proportion of looking to correct object") +
+  theme_bw(base_size = 18) + 
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+#ggsave(here("figures/looking_raw_exposure_target_familiarity.png"), width = 12, height = 7, dpi = 300)
+
+# Vocabulary (comprehension) (raw graph, 498 points)
+plot_vocab <-  
+  data_lmer_test_agg_id %>% 
+  ggplot(aes(x = vocab_target, y = Prop)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  ylim(c(0, 1)) +
+  labs(x = "Vocabulary in sentence frame languages (n)",
+       y = "Proportion of looking to correct object") +
+  theme_bw(base_size = 18) + 
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+#ggsave(here("figures/looking_raw_vocab_target.png"), width = 12, height = 7, dpi = 300)
+
+# Looking during Training (raw graph, 495 points)
+plot_training <- 
+  data_lmer_test_agg_id %>% 
+  ggplot(aes(x = total_looking_time_training, y = Prop)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  ylim(c(0, 1)) +
+  xlim(c(0, 50000)) +
+  labs(x = "Total looking time during training (ms)",
+       y = "Proportion of looking to correct object") +
+  theme_bw(base_size = 18) + 
+  theme(axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+#ggsave(here("figures/looking_raw_training_total_look.png"), width = 12, height = 7, dpi = 300)
+
+# plot join
+plot_join <- 
+(plot_perc + theme(legend.position = "none") | plot_vocab + theme(axis.title.y = element_blank(), axis.text.y = element_blank())) / plot_training + plot_annotation(tag_levels = 'A')
+
+plot_join
+
+#ggsave(here("figures/plot_joint.png"), width = 14, height = 10, dpi = 300)
+```
+# 7. Models
+
+We are fitting linear mixed-models with the following fixed and random effects. 
+
+*Fixed effects*:
+
+1. Percentage of exposure to the sentence frame language (continuous variable);
+
+2. Vocabulary size (comprehension) of the sentence frame language (continuous);
+
+3. Total looking at Training (continuous, ms).
+
+*Random effects*:
+
+We started with the maximal structure, having words as random slopes and participants as random intercepts: `(target_word|id)`. This structure failed for all three models and were pruned.
+
+*DV*:
+
+Centered DV: `looking proportion to target - chance (0.5)`, 0 correspond to chance performance, negative indicates more looks **away** from target, positive indicate looks **towards** the target.
+
+## 7.1. Testing the random structure 
+
+### 7.1.1. Maximal: random slope (item) and intercept (id)
+
+```{r}
+# maximal: random slope (item) and intercept (id)
+lmer_mod1 <- lme4::lmer(Prop -.5 ~ per_exposure_target + (target_word|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod2 <- lme4::lmer(Prop - .5 ~ vocab_target + (target_word|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod3 <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (target_word|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+summary(lmer_mod1)
+ranef(lmer_mod1) 
+
+summary(lmer_mod2)
+ranef(lmer_mod2) 
+
+summary(lmer_mod3)
+ranef(lmer_mod3) 
+```
+
+### 7.1.2. Pruned 1: random intercepts (item, id)
+
+```{r}
+# random intercepts: item and id 
+lmer_mod4 <- lme4::lmer(Prop -.5 ~ per_exposure_target + (1|target_word) + (1|id), 
+                          data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod5 <- lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word) + (1|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod6 <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word) + (1|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+summary(lmer_mod4)
+ranef(lmer_mod4) 
+
+summary(lmer_mod5)
+ranef(lmer_mod5) 
+
+summary(lmer_mod6)
+ranef(lmer_mod6) 
+```
+
+### 7.1.3. Pruned 2: random intercept (id)
+
+```{r}
+# random intercept: id
+lmer_mod7 <- lme4::lmer(Prop -.5 ~ per_exposure_target + (1|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod8 <- lme4::lmer(Prop - .5 ~ vocab_target + (1|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+lmer_mod9 <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|id), 
+                        data = data_lmer_test_agg_id) # singularity warning
+
+summary(lmer_mod7)
+ranef(lmer_mod7)
+
+summary(lmer_mod8)
+ranef(lmer_mod8) 
+
+summary(lmer_mod9)
+ranef(lmer_mod9) 
+```
+
+## 7.2. Pruned 3: random intercept (item) 
+
+Final, pruned, model. 
+
+```{r}
+# random intercept: item (kem or bos)
+lmer_mod10 <- lme4::lmer(Prop - .5 ~ per_exposure_target + (1|target_word), 
+                         data = data_lmer_test_agg_id) # converge 
+
+lmer_mod11 <- lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word), 
+                        data = data_lmer_test_agg_id) # converge
+
+lmer_mod12 <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word), 
+                        data = data_lmer_test_agg_id) # converge
+
+summary(lmer_mod10)
+ranef(lmer_mod10)
+
+summary(lmer_mod11)
+ranef(lmer_mod11)
+
+summary(lmer_mod12)
+ranef(lmer_mod12)
+
+tab_model(lmer_mod10,
+          show.re.var = T,
+          show.icc = T,
+          title = "Exposure to target (%)"#,
+          #file = here("figures/table_lmer_exposure.doc")
+          )
+
+tab_model(lmer_mod11,
+          show.re.var = T,
+          show.icc = T,
+          title = "Vocabulary in target language (n)"#,
+          #file = here("figures/table_lmer_vocab.doc")
+          )
+
+tab_model(lmer_mod12,
+          show.re.var = T,
+          show.icc = T,
+          title = "Total looking time during Training"#,
+          #file = here("figures/table_lmer_training.doc")
+          )
+
+# intercept only - for later effect size calculation
+lmer_null <- lme4::lmer(Prop - .5 ~ 1 + (1|target_word), 
+                        data = data_lmer_test_agg_id) 
+
+summary(lmer_null)
+tab_model(lmer_null,
+          show.re.var = T,
+          show.icc = T,
+          title = "Null (random effects only)"#,
+          #file = here("figures/table_lmer_exposure.doc")
+          )
+```
+
+## 7.3. Checking model assumptions
+
+```{r}
+# DV distribution
+hist(data_lmer_test_agg_id$Prop - .5) # approximately normal
+
+# residual distribution
+plot(residuals(lmer_mod10)) # random 
+
+# Distribution of residuals
+qqnorm(residuals(lmer_mod10)) # approximately normal
+
+## homogeneity of variance 
+car::leveneTest(residuals(lmer_mod10) ~ data_lmer_test_agg_id$target_word) # is homogeneous
+boxplot(residuals(lmer_mod10) ~ data_lmer_test_agg_id$target_word) # is homogeneous
+```
+
+
+# B) Looking while listening versus Switch task
+
+This analysis compares the effect size found in our experiment with the Looking while listening paradigm, with the effect sizes of 14-month-old infants learning dissimilar sounding words in a Switch task. 
+
+Data for the Switch task comes from a meta-analysis by Tsui, Byers-Heinlein, and Fennell (2019) and is openly available at:
+
+OSF: https://osf.io/uwe8g/ 
+MetaLab: http://metalab.stanford.edu/dataset/switchtask/ 
+
+Tsui, A. S. M., Byers-Heinlein, K., & Fennell, C. T. (2019). Associative word learning in infancy: A meta-analysis of the switch task. *Developmental Psychology, 55*(5), 934–950. https://doi.org/10.1037/dev0000699
+
+***
+
+
+# 8. Looking while listening
+
+8.1 Calculate the effect size for our sample.
+
+8.1.1 Overall traditional *Cohen's d*, with 1 observation (average) per participant and assuming independence.
+  
+```{r}
+# aggregate data by participant (1 proportion per participant)
+agg_id_d <- 
+  data_lmer_test_agg_id %>% 
+  group_by(id) %>% 
+  summarise(mean_prop = mean(Prop, na.rm = T),
+            chance_level = 0.5)
+
+# calculate Cohen's d
+d_stats <- 
+  agg_id_d %>%
+  summarise(mean = mean(mean_prop, na.rm = T),
+            sd = sd(mean_prop, na.rm = T),
+            chance_level = 0.5,
+            d = (mean - chance_level)/sd,
+            n = 155,
+            alpha = 0.05,
+            z_crit = qnorm(1-alpha/2),
+            se = sqrt(1/n + d^2/(2*n)),
+            d_lower = d-se*z_crit,
+            d_upper = d+se*z_crit
+            )
+```
+
+8.1.2 Approximate effect size for mixed models: $\omega^2$
+
+```{r}
+# calculate omega squared as an approximate effect size for mixed models
+omga_perc_exposure = effectsize::omega_squared(lmer_mod10, ci = 0.95)
+omga_vocab = effectsize::omega_squared(lmer_mod11, ci = 0.95)
+omga_training = effectsize::omega_squared(lmer_mod12, ci = 0.95)
+
+omga_perc_exposure
+omga_vocab
+omga_training
+```
+
+8.1.3 Approximate effect size from Brysbaert & Stevens (2018) - http://doi.org/10.5334/joc.10 
+$$
+\begin{array}{l}
+d = \,\,\frac{{difference\, between\, the\, means}}{{\sqrt {varintercep{t_{part}} + varintercep{t_{item}} + varslop{e_{part}} + varslop{e_{item}} + va{r_{residual}}}}}\\
+\end{array}
+$$
+
+```{r}
+# from null model
+summary(lmer_null)
+
+# mixed d
+mixed_d <- 0.02252 / sqrt(0.002901 + 0.063872)
+round(mixed_d, 2)
+```
+
+# 8.2. Switch task
+## 8.2.1. Load dataset
+
+```{r}
+switch_ma <- read.csv(here("data/Switch task.csv"))
+```
+
+## 8.2.2. Filter dataset
+
+- Age: Same age range as our research, "13 months and 16 days – 15 months and 12 days"
+- Word type: "dissimilar sounding"
+
+```{r}
+# month to days (metalab convention = 30.44)
+min_age <- 13*30.44 + 16
+max_age <- 15*30.44 + 12
+
+# filter
+switch_ma_filtered <- 
+  switch_ma %>% 
+  filter(minimal_pairs == "dissimilar sounding",
+         mean_age >= min_age,
+         mean_age <= max_age)
+```
+
+## 8.2.3. Descriptive stats
+
+- Number of studies;
+- Number of participants;
+- Mean age, sex etc.
+
+```{r}
+switch_ma_filtered %>% 
+  summarise(studies_n = nrow(.),
+            total_n = sum(n, na.rm = T),
+            prop_female = mean(gender_1, na.rm = T), 
+            mean_age_days = mean(mean_age, na.rm = T), 
+            mean_age_months = mean_age_days/30.44)
+```
+
+## 8.2.4. Estimate effect-size
+
+- Use the `metafor` package to run a mini-MA
+- Double check code with Metalab code (will I be able to decypher it??)
+
+```{r}
+switch_mini_ma <- metafor::rma(d, d_var, data = switch_ma_filtered)
+summary(switch_mini_ma)
+
+# estimate effect size
+switch_mini_ma$b
+
+# forest plot
+metafor::forest(switch_mini_ma)
+```
+
+# END OF ANALYSIS SCRIPT

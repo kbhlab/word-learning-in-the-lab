@@ -1,0 +1,17 @@
+keeper_traditional,lang_criteria_met,lang_group,dom_lang,best_lang,n,n_prop,age_avg,age_sd,female_n
+0,no,bilingual_freng,english,english,15,0.3333333333333333,437.2,13.98570698963767,8
+0,no,bilingual_freng,french,french,3,0.06666666666666667,443,23.57965224510319,1
+0,no,bilingual_other_dom,english,english,2,0.044444444444444446,445.5,0.7071067811865476,1
+0,no,bilingual_other_dom,french,french,2,0.044444444444444446,434.5,14.849242404917497,1
+0,no,bilingual_other_nondom,other,french,1,0.022222222222222223,423,NA,0
+0,no,monolingual,french,french,1,0.022222222222222223,435,NA,1
+0,no,trilingual,english,english,3,0.06666666666666667,439.666666666667,16.289055630494154,1
+0,no,trilingual,french,french,1,0.022222222222222223,446,NA,1
+0,no,trilingual,other,english,2,0.044444444444444446,462.5,3.5355339059327378,0
+0,yes,bilingual_freng,french,french,2,0.044444444444444446,430,1.4142135623730951,1
+1,yes,bilingual_freng,english,english,5,0.1111111111111111,434.8,12.755391017134675,4
+1,yes,bilingual_freng,french,french,3,0.06666666666666667,441,3.605551275463989,1
+1,yes,bilingual_other_nondom,other,english,1,0.022222222222222223,418,NA,1
+1,yes,bilingual_other_nondom,other,french,1,0.022222222222222223,437,NA,1
+1,yes,monolingual,english,english,2,0.044444444444444446,455,1.4142135623730951,1
+1,yes,monolingual,french,french,1,0.022222222222222223,449,NA,1
