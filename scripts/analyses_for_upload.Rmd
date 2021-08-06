@@ -9,6 +9,7 @@ source("groundhog_library.R")
 #1.1. Load dataset
 ```{r}
 load(here("data/data_ready_for_analysis.Rda"))
+#write.csv(dataset, file = "data_ready_for_analysis.csv") # generates a 1.6GB file
 dataset_original <- dataset
 dataset <- dataset %>%
   mutate(trial_lang = case_when(trial_lang == "best" ~ "most_familiar",
