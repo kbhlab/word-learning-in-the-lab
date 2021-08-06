@@ -494,7 +494,6 @@ On the **proportion of looking to the labeled object during Test**.
 
 ```{r}
 # full dataset
-
 data_lmer <- 
   dataset_original %>% 
   filter(keeper_new_analysis == 1) %>% #filter to only keepers for updated analysis
@@ -697,6 +696,7 @@ plot_perc <-
   ylim(c(0, 1)) +
   labs(x = "Exposure to sentence frame languages (%)",
        y = "Proportion of looking to correct object") +
+  facet_wrap(~ condition) + # split by condition 
   theme_bw(base_size = 18) + 
   theme(axis.text.x = element_text(size = 10),
         axis.text.y = element_text(size = 10),
@@ -715,6 +715,7 @@ plot_vocab <-
   ylim(c(0, 1)) +
   labs(x = "Vocabulary in sentence frame languages (n)",
        y = "Proportion of looking to correct object") +
+  facet_wrap(~ condition) + # split by condition
   theme_bw(base_size = 18) + 
   theme(axis.text.x = element_text(size = 10),
         axis.text.y = element_text(size = 10),
@@ -734,6 +735,7 @@ plot_training <-
   xlim(c(0, 50000)) +
   labs(x = "Total looking time during training (ms)",
        y = "Proportion of looking to correct object") +
+  facet_wrap(~ condition) + # split by condition
   theme_bw(base_size = 18) + 
   theme(axis.text.x = element_text(size = 10),
         axis.text.y = element_text(size = 10),
@@ -848,13 +850,14 @@ Final, pruned, model.
 
 ```{r}
 # random intercept: item (kem or bos)
-lmer_mod10 <- lme4::lmer(Prop - .5 ~ per_exposure_target + (1|target_word), 
+# condition as predictor
+lmer_mod10 <- lme4::lmer(Prop - .5 ~ per_exposure_target * condition + (1|target_word), 
                          data = data_lmer_test_agg_id) # converge 
 
-lmer_mod11 <- lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word), 
+lmer_mod11 <- lme4::lmer(Prop - .5 ~ vocab_target * condition + (1|target_word), 
                         data = data_lmer_test_agg_id) # converge
 
-lmer_mod12 <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word), 
+lmer_mod12 <- lme4::lmer(Prop - .5 ~ total_looking_time_training * condition + (1|target_word), 
                         data = data_lmer_test_agg_id) # converge
 
 summary(lmer_mod10)
@@ -885,6 +888,93 @@ tab_model(lmer_mod12,
           show.icc = T,
           title = "Total looking time during Training"#,
           #file = here("figures/table_lmer_training.doc")
+          )
+
+# joint table
+tab_model(lmer_mod10, lmer_mod11, lmer_mod12,
+          show.re.var = T,
+          show.icc = T,
+          title = "Joint table: % exposure, vocabulary, looking time"#,
+          #file = here("figures/table_lmer_training.doc")
+          )
+
+# separate models for each condition
+# exposure
+lmer_mod10_two_lang <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "two_lang") %>% 
+  lme4::lmer(Prop - .5 ~ per_exposure_target + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod10_one_lang_foreign <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_foreign") %>% 
+  lme4::lmer(Prop - .5 ~ per_exposure_target + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod10_one_lang_native <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_native") %>% 
+  lme4::lmer(Prop - .5 ~ per_exposure_target + (1|target_word), 
+                         data = .) # converge 
+
+tab_model(lmer_mod10_two_lang, lmer_mod10_one_lang_foreign, lmer_mod10_one_lang_native,
+          show.re.var = T,
+          show.icc = T,
+          title = "Exposure to target (%): 2-lang, 1-foreign, 1-native"#,
+          #file = here("figures/table_lmer_exposure.doc")
+          )
+
+# vocabulary
+lmer_mod11_two_lang <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "two_lang") %>% 
+  lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod11_one_lang_foreign <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_foreign") %>% 
+  lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod11_one_lang_native <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_native") %>% 
+  lme4::lmer(Prop - .5 ~ vocab_target + (1|target_word), 
+                         data = .) # converge 
+
+tab_model(lmer_mod11_two_lang, lmer_mod11_one_lang_foreign, lmer_mod11_one_lang_native,
+          show.re.var = T,
+          show.icc = T,
+          title = "Vocabulary: 2-lang, 1-foreign, 1-native"#,
+          #file = here("figures/table_lmer_exposure.doc")
+          )
+
+# looking time during training
+lmer_mod12_two_lang <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "two_lang") %>% 
+  lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod12_one_lang_foreign <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_foreign") %>% 
+  lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word), 
+                         data = .) # converge 
+
+lmer_mod12_one_lang_native <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "one_lang_native") %>% 
+  lme4::lmer(Prop - .5 ~ total_looking_time_training + (1|target_word), 
+                         data = .) # converge 
+
+tab_model(lmer_mod12_two_lang, lmer_mod12_one_lang_foreign, lmer_mod12_one_lang_native,
+          show.re.var = T,
+          show.icc = T,
+          title = "Vocabulary: 2-lang, 1-foreign, 1-native"#,
+          #file = here("figures/table_lmer_exposure.doc")
           )
 
 # intercept only - for later effect size calculation
