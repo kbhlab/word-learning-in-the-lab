@@ -4,30 +4,7 @@ output: html_notebook
 ---
 ##1. SETUP
 ```{r}
-options(scipen = 999)
-
-## 1. Load packages
-library(weights)
-library(eyetrackingR)
-library(tidyverse)
-library(lme4)
-library(lmerTest)
-library(broom)
-library(corrr)
-library(forcats)
-library(ez)
-library(dplyr)
-library(ggpubr)
-library(tidylog)
-library(janitor)
-library(here)
-library(patchwork)
-library(sjPlot)
-library(car)
-library(metafor)
-
-library(effectsize)
-
+source("groundhog_library.R")
 ```
 #1.1. Load dataset
 ```{r}
