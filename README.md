@@ -1,8 +1,12 @@
 ## Word learning in the lab is hard! Data from 14-month-old monolingual and bilingual infants
-- Ana Maria Gonzalez-Barrero
-- Rodrigo Dal Ben
-- Hilary Killam
-- Krista Byers-Heinlein
+
+Ana Maria Gonzalez-Barrero
+
+Rodrigo Dal Ben
+
+Hilary Killam
+
+Krista Byers-Heinlein
 
 This repository contains the analysis code associated with the research manuscript *Word learning in the lab is hard!*. You can find the associated OSF project, including raw data files and the stimuli used in the studies, at: https://osf.io/upy7f/
 
