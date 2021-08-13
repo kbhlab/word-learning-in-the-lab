@@ -9,7 +9,7 @@ This repository contains the analysis code associated with the research manuscri
 ### Repository overview
 
 **Data** - this folder contains data files used in the scripts. Due to size limits, the eyetracking data is saved in .Rda format. For a CSV version of the raw eyetracking data, please see the OSF project linked above.
-- ```Switch task.csv``` This file contains data 
+- ```Switch task.csv``` This file contains open data from Tsui, Byers-Heinlein, & Fennell (2019), which we used in our analyses to estimate the effect size of the Switch Task, following our study constraints, to compare whether our task was more or less sensitive than the Switch Task.
 - ```data_ready_for_analysis.Rda``` This file contains the raw eyetracking data collected in our studies, saved in .Rda format due to size constraints for uploading to GitHub. A CSV version can be found on OSF.
 - ```participant_data.csv``` This file contains demographic information for participants included in the Traditional analyses
 - ```upd_analysis_participant_demographics.csv``` This file contains demographic information for participants included in the Updated analyses, summarized by language familiarity and inclusion status in the traditional analysis.
@@ -21,3 +21,9 @@ This repository contains the analysis code associated with the research manuscri
 - ```analyses_for_upload.Rmd``` This is the full analysis script.
 - ```analyses_for_upload.nb.html``` This is the HTML output of the script when run.
 - ```groundhog_library.R``` This is the library of specific packages and versions used in the original analysis script, to make reproducibility of the analysis more straightforward.
+
+References
+
+Fenson L., Marchman V. A., Thal D. J., Dale P. S., Reznick S., Bates E. (2007). MacArthur-Bates communicative development inventories (2nd ed). Baltimore, MD: Brookes Pub-lishing.
+
+Tsui, A. S. M., Byers-Heinlein, K., & Fennell, C. T. (2019). Associative word learning in infancy: A meta-analysis of the switch task. Developmental Psychology, 55(5), 934–950. https://doi.org/10.1037/dev0000699
