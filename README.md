@@ -9,7 +9,7 @@ This repository contains the analysis code associated with the research manuscri
 ### Repository overview
 
 **Data** - this folder contains data files used in the scripts. Due to size limits, the eyetracking data is saved in .Rda format. For a CSV version of the raw eyetracking data, please see the OSF project linked above.
-- ```Switch task.csv``` This file contains open data from Tsui, Byers-Heinlein, & Fennell (2019), which we used in our analyses to estimate the effect size of the Switch Task, following our study constraints, to compare whether our task was more or less sensitive than the Switch Task.
+- ```Switch task.csv``` This file contains open data from Tsui, Byers-Heinlein, & Fennell (2019), which we used in our analyses to estimate the effect size of the Switch Task using our studies' parameters (similar age and stimuli), to assess whether our task was more or less sensitive than the Switch Task.
 - ```data_ready_for_analysis.Rda``` This file contains the raw eyetracking data collected in our studies, saved in .Rda format due to size constraints for uploading to GitHub. A CSV version can be found on OSF.
 - ```participant_data.csv``` This file contains demographic information for participants included in the Traditional analyses
 - ```upd_analysis_participant_demographics.csv``` This file contains demographic information for participants included in the Updated analyses, summarized by language familiarity and inclusion status in the traditional analysis.
