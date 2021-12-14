@@ -1,0 +1,7 @@
+object,location,trial.type,x.topleft,y.topleft, x.length,y.length
+kem,center,training,515,328,906,541
+kem,left,test,120,337,795,438
+kem,right,test,1036,326,795,438
+bos,center,training,490,295,920,626
+bos,left,test,134,299,670,501
+bos,right,test,1077,297,670,501

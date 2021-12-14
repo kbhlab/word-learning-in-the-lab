@@ -4,18 +4,52 @@ output: html_notebook
 ---
 ##1. SETUP
 ```{r}
-source("groundhog_library.R")
+#source("groundhog_library.R")
+
+options(scipen = 999)
+
+## 1. Load packages
+library(weights)
+library(eyetrackingR)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(broom)
+library(corrr)
+library(forcats)
+library(ez)
+library(dplyr)
+library(ggpubr)
+library(tidylog)
+library(janitor)
+library(here)
+library(patchwork)
+library(sjPlot)
+library(car)
+library(metafor)
+
+library(effectsize)
 ```
 #1.1. Load dataset
 ```{r}
-load(here("data/data_ready_for_analysis.Rda"))
+load(here("data/2021-11-04_data_ready_for_analysis.Rda"))
+#load(here("data/OLD2021-10-21_data_ready_for_analysis.Rda"))
 #write.csv(dataset, file = "data_ready_for_analysis.csv") # generates a 1.6GB file
+
+dataset <- dataset %>%
+   mutate(exclude = case_when(id == "Novel_14_S124" & trial_number == 6 ~ TRUE, #remove these trials for technical lagging (When we plotted the data, these trials took longer than they should have and so TOBII lagged. Remove them)
+                             id == "Novel_14_S89" & trial_number == 4 ~ TRUE,
+                             id == "Novel_14_S136" & trial_number == 17 ~ TRUE,
+                             id == "NovelDom_14_S09" & trial_number == 20 ~ TRUE,
+                             id == "NovelDom14_S26_43142" & trial_number == 18 ~ TRUE,
+                             TRUE ~ FALSE)) %>% 
+  filter(exclude != TRUE)
+
 dataset_original <- dataset
 dataset <- dataset %>%
   mutate(trial_lang = case_when(trial_lang == "best" ~ "most_familiar",
                                 trial_lang == "non-best" ~ "least_familiar")) %>%
-  rename(familiarity = trial_lang) %>%
-  select(-gender_coded)
+  rename(familiarity = trial_lang) 
                                 #Load full data file
 
 data_keepers_trad <- dataset %>% filter(keeper_traditional == 1)
@@ -24,8 +58,9 @@ data_keepers_trad <- dataset %>% filter(keeper_traditional == 1)
 ##PARTICIPANTS EXCLUSION
 #1.2. Checking participants who can be kept (keepers)
 ```{r}
-participants <- read_csv(here("data", "participant_data.csv")) %>% 
-  filter(!is.na(baby_id)) #288 total
+participants <- read_csv(here("data", "2021-11-04_participant_data_for_upload.csv")) %>% 
+#participants <- read_csv(here("data", "OLD_participants_data.csv")) %>% 
+  filter(!is.na(baby_id))#288 total 
 ```
 #1.2.1. Counting number of excluded participants and the reason for exclusion
 ```{r}
@@ -36,33 +71,31 @@ participants %>%
 ```
 #1.3 Excluding participants who do not meet language criteria
 ```{r}
-data_keepers_trad <- data_keepers_trad %>%
-  mutate(lang_ok = case_when(lang_group == "bilingual_freng" & ((per_eng >= 25 & per_fr >= 50) | (per_eng >= 50 & per_fr >= 25)) & per_other <= 20 ~ 1,
-                             intended_study == "Novel_14" & lang_group == "bilingual_other_dom" & (per_eng >= 50 | per_fr >= 50) & per_other >= 25 & (per_eng <= 5 | per_fr <= 5) ~ 1,
-                             intended_study == "Novel_14" & lang_group == "bilingual_other_nondom" & per_other >= 50 & (per_eng >= 25 | per_fr >= 25) & (per_eng <= 5 | per_fr <= 5) ~ 1,
-                             lang_group == "monolingual" & (per_eng >= 90 | per_fr >= 90) ~ 1,
-                             TRUE ~ 0)) %>% # 44 participants don't meet language criteria
-filter(lang_ok == 1)
+
+#------------------------This section no longer does anything because we updated the exclusion reasons in the MSL
+# data_keepers_trad <- data_keepers_trad %>%
+#   mutate(lang_ok = case_when(lang_group == "bilingual_freng" & ((per_eng >= 25 & per_fr >= 50) | (per_eng >= 50 & per_fr >= 25)) & per_other <= 20 ~ 1,
+#                              intended_study == "Novel_14" & lang_group == "bilingual_other_dom" & (per_eng >= 50 | per_fr >= 50) & per_other >= 25 & (per_eng <= 5 | per_fr <= 5) ~ 1,
+#                              intended_study == "Novel_14" & lang_group == "bilingual_other_nondom" & per_other >= 50 & (per_eng >= 25 | per_fr >= 25) & (per_eng <= 5 | per_fr <= 5) ~ 1,
+#                              lang_group == "monolingual" & (per_eng >= 90 | per_fr >= 90) ~ 1,
+#                              TRUE ~ 0)) %>% # 44 participants don't meet language criteria 
+#   distinct(id, .keep_all = TRUE) %>%
+# filter(lang_ok == 1)
 
 ```
-#1.4 Exclude a few trials with eyetracker technical difficulties (Tobii lagged)
+#1.4 Create language groupings
 
 ```{r}
+#------------------------------------------------------Create a zeroed timestamp and language groupings
+
 data_keepers_trad <- data_keepers_trad %>%
   ungroup() %>%
   group_by(id, recording_number, trial_number) %>%
   mutate(trial_from_zero = recording_timestamp - min(recording_timestamp),
          group = case_when(str_detect(lang_group, "bilingual") ~ "Bilinguals",
                            str_detect(lang_group, "monolingual") ~ "Monolinguals")) %>%
-  ungroup() %>%
-  filter(id != "NovelDom_14_S09" & id != "NovelDom_14_S11") %>% # exclude these trials due to technical difficulties
-  mutate(exclude = case_when(id == "Novel_14_S124" & trial_number == 6 ~ TRUE, #remove these trials
-                             id == "Novel_14_S89" & trial_number == 4 ~ TRUE,
-                             id == "Novel_14_S136" & trial_number == 17 ~ TRUE,
-                             id == "NovelDom_14_S09" & trial_number == 20 ~ TRUE,
-                             id == "NovelDom14_S26_43142" & trial_number == 18 ~ TRUE,
-                             TRUE ~ FALSE)) %>%
-  filter(exclude != TRUE)
+  ungroup()
+ 
 
 ```
 
@@ -98,7 +131,7 @@ data_keepers_trad %>% count(condition) #No NAs
 data_keepers_trad %>% count(experiment, trad_analysis_group) #7 groups (1 per experiment)
 
 ```
-#2.2. Create variable "stimulus_to_baby" depending on whether the stimuli is in the infant's dominant language, non-dominant or in a foreign language
+#2.2. Create variable "stimulus_to_baby" depending on whether the stimulus is in the infant's dominant language, non-dominant or in a foreign language
 ```{r}
 data_keepers_trad <- data_keepers_trad %>% 
     mutate(stimulus_to_baby = case_when(
@@ -108,7 +141,7 @@ data_keepers_trad <- data_keepers_trad %>%
       dom_lang == "other" & best_lang != carrier_language ~ "foreign",
       lang_group == "bilingual_freng" & carrier_language != dom_lang ~ "nondominant",
       lang_group == "bilingual_other_dom" & carrier_language != dom_lang ~ "foreign",
-      TRUE ~ "other")) %>%
+      TRUE ~ "other")) %>% 
   group_by(id, recording_number, trial_number) %>%
       mutate(trial_from_zero = recording_timestamp - min(recording_timestamp)) %>%
   ungroup()
@@ -172,7 +205,7 @@ trackloss_test_trad <- trackloss_analysis(response_window_test_trad)
 response_window_test_trad <- clean_by_trackloss(data = response_window_test_trad,
                                    trial_prop_thresh = (1 - 750/(10000 - 3200))) # Need at least 750ms looking = 750/(10000 - 3200) divide by trial length
 
-130 - n_distinct(response_window_test_trad$id) #number of participants excluded due to trackloss
+participants %>% filter(is.na(reason_exclusion)) %>% nrow() - n_distinct(response_window_test_trad$id) #number of participants excluded due to trackloss
 
 ```
 #2.7. Checking if there are participants with fewer than two trials for test
@@ -193,10 +226,19 @@ length(unique(response_window_test_trad$id)) - length(unique(data_test_trad$id))
 
 ```{r descriptives}
 
-final_sample_ids <- data_test_trad %>% select(id, experiment) %>% distinct() #110 participants
+#---------------------------------------------------------TRADITIONAL
+
+final_sample_ids <- data_test_trad %>% select(id, experiment) %>% distinct() %>% mutate(id = as.character(id)) %>% ungroup() #109 participants
 
 final_sample <- final_sample_ids %>%
-  left_join(participants, by = c("id" = "recording_name"))
+  left_join(participants, by = c("id" = "recording_name")) %>%
+  mutate(condition = ifelse(stimulus_set == "Foreign_14"| stimulus_set == "Foreign_14_Feb2018", "single_lang", "dual_lang"),
+         condition_language = case_when(str_detect(study_order, "E") ~ "english",
+                                        str_detect(study_order, "F") ~ "french",
+                                        TRUE ~ "bilingual")) %>%
+  mutate(condition = case_when(condition_language == dom_lang ~ "single_lang_native",
+                               condition_language == "bilingual" ~ "dual_lang",
+                               TRUE ~ "single_lang_foreign"))
   
 #age breakdown
 
@@ -207,6 +249,30 @@ final_sample %>%
   mutate(lang_group = case_when(str_detect(lang_group, "other") ~"bilingual_other",
                                 TRUE ~ lang_group)) %>%
   group_by(lang_group) %>%
+  summarize(count = length(unique(id)),
+            avg_age_days = floor(mean(total_age_days_excel, na.rm = TRUE)),
+            sd_age_days = (sd(total_age_days_excel, na.rm = TRUE)),
+            min_age_days = min(total_age_days_excel),
+            max_age_days = max(total_age_days_excel),
+            avg_age = avg_age_days/30.436875, #divide by average days in a month
+            avg_months = floor(avg_age),
+            avg_days = floor((avg_age - avg_months) * 30.436875),
+            min_age = min_age_days/30.436875,
+            min_months = floor(min_age),
+            min_days = floor((min_age - min_months) * 30.436875),
+            max_age = max_age_days/30.436875,
+            max_months = floor(max_age),
+            max_days = floor((max_age - max_months) * 30.436875),            
+            num_female = sum(gender_written == "female")) %>%
+  select(-avg_age_days, -min_age_days, -max_age_days, -avg_age, -min_age, -max_age)
+
+
+#Overall age breakdown
+
+final_sample %>%
+  ungroup() %>%
+  select(id, gender_written, total_age_days_excel, lang_group, experiment) %>%
+  distinct() %>%
   summarize(count = length(unique(id)),
             avg_age_days = floor(mean(total_age_days_excel, na.rm = TRUE)),
             sd_age_days = (sd(total_age_days_excel, na.rm = TRUE)),
@@ -237,6 +303,11 @@ final_sample %>%
             per_fr = mean(per_fr, na.rm = TRUE),
             per_other = mean(per_other, na.rm = TRUE)) %>%
   mutate(per_en_and_fr = per_en + per_fr)
+
+#How many had en vs fr as nondom
+final_sample %>%
+  filter(lang_group == "bilingual_other_nondom") %>%
+  count(best_lang)
 
 # total number of participants per experimental group
 final_sample %>%
@@ -495,24 +566,17 @@ On the **proportion of looking to the labeled object during Test**.
 
 ```{r}
 # full dataset
+
 data_lmer <- 
   dataset_original %>% 
   filter(keeper_new_analysis == 1) %>% #filter to only keepers for updated analysis
+  filter(lang_group != "trilingual") %>%
   ungroup() %>%
   group_by(id, recording_number, trial_number) %>%
   mutate(trial_from_zero = recording_timestamp - min(recording_timestamp), #make every trial start at 0
          group = case_when(str_detect(lang_group, "bilingual") ~ "Bilinguals",
-                           str_detect(lang_group, "monolingual") ~ "Monolinguals",
-                           str_detect(lang_group, "trilingual") ~ "Trilinguals")) %>%
+                           str_detect(lang_group, "monolingual") ~ "Monolinguals")) %>%
   ungroup() %>%
-  filter(id != "NovelDom_14_S09" & id != "NovelDom_14_S11") %>% #exclude trials with technical difficulties
-  mutate(exclude = case_when(id == "Novel_14_S124" & trial_number == 6 ~ TRUE, 
-                             id == "Novel_14_S89" & trial_number == 4 ~ TRUE,
-                             id == "Novel_14_S136" & trial_number == 17 ~ TRUE,
-                             id == "NovelDom_14_S09" & trial_number == 20 ~ TRUE,
-                             id == "NovelDom14_S26_43142" & trial_number == 18 ~ TRUE,
-                             TRUE ~ FALSE)) %>%
-  filter(exclude != TRUE) %>% #filter out standard exclusions
   mutate(condition = ifelse(stimulus_set == "Foreign_14"| stimulus_set == "Foreign_14_Feb2018", "one_lang", "two_lang"),
          condition_language = case_when(str_detect(study_order, "E") ~ "english",
                                         str_detect(study_order, "F") ~ "french",
@@ -579,8 +643,107 @@ data_lmer_test_eye_window_clean <- clean_by_trackloss(data = data_lmer_test_eye_
 n_distinct(data_lmer_test_eye_window$id) - n_distinct(data_lmer_test_eye_window_clean$id) # 8
 
 # final sample size for Test
-n_distinct(data_lmer_test_eye_window_clean$id) # 155 
+n_distinct(data_lmer_test_eye_window_clean$id) # 151 
 ```
+## DESCRIPTIVES UPDATED ANALYSIS
+
+```{r descriptives_updated}
+
+#---------------------------------------------------------UPDATED
+
+final_sample_ids_updated <- data_lmer_test_eye_window_clean %>% 
+  select(id) %>% distinct() #151 participants
+
+final_sample_updated <- final_sample_ids_updated %>%
+  left_join(participants, by = c("id" = "recording_name"))
+
+only_1_trial_in_trad <- response_window_test_trad %>% 
+  anti_join(data_test_trad, by = "id") %>% 
+  distinct(id) %>% 
+  mutate(only_1_trial_in_trad = "yes")
+
+infants_added <- final_sample_updated %>% 
+  mutate(added = ifelse(is.na(reason_exclusion), 0, 1)) %>%
+  left_join(only_1_trial_in_trad, by = "id") %>%
+  mutate(added = case_when(only_1_trial_in_trad == "yes" ~ 1,
+                           TRUE ~ added),
+         added = case_when(is.na(added) ~ 0,
+                           TRUE ~ added)) %>% 
+  filter(added == 1)
+  
+  
+#age breakdown
+
+infants_added %>%
+  ungroup() %>%
+  select(id, gender_written, total_age_days_excel) %>%
+  distinct() %>%
+  summarize(count = length(unique(id)),
+            avg_age_days = floor(mean(total_age_days_excel, na.rm = TRUE)),
+            sd_age_days = (sd(total_age_days_excel, na.rm = TRUE)),
+            min_age_days = min(total_age_days_excel),
+            max_age_days = max(total_age_days_excel),
+            avg_age = avg_age_days/30.436875, #divide by average days in a month
+            avg_months = floor(avg_age),
+            avg_days = floor((avg_age - avg_months) * 30.436875),
+            min_age = min_age_days/30.436875,
+            min_months = floor(min_age),
+            min_days = floor((min_age - min_months) * 30.436875),
+            max_age = max_age_days/30.436875,
+            max_months = floor(max_age),
+            max_days = floor((max_age - max_months) * 30.436875),            
+            num_female = sum(gender_written == "female")) %>%
+  select(-avg_age_days, -min_age_days, -max_age_days, -avg_age, -min_age, -max_age)
+
+
+#Overall age breakdown
+
+final_sample_updated %>%
+  ungroup() %>%
+  select(id, gender_written, total_age_days_excel, lang_group) %>%
+  distinct() %>%
+  summarize(count = length(unique(id)),
+            avg_age_days = floor(mean(total_age_days_excel, na.rm = TRUE)),
+            sd_age_days = (sd(total_age_days_excel, na.rm = TRUE)),
+            min_age_days = min(total_age_days_excel),
+            max_age_days = max(total_age_days_excel),
+            avg_age = avg_age_days/30.436875, #divide by average days in a month
+            avg_months = floor(avg_age),
+            avg_days = floor((avg_age - avg_months) * 30.436875),
+            min_age = min_age_days/30.436875,
+            min_months = floor(min_age),
+            min_days = floor((min_age - min_months) * 30.436875),
+            max_age = max_age_days/30.436875,
+            max_months = floor(max_age),
+            max_days = floor((max_age - max_months) * 30.436875),            
+            num_female = sum(gender_written == "female")) %>%
+  select(-avg_age_days, -min_age_days, -max_age_days, -avg_age, -min_age, -max_age)
+
+
+#average exposure to each language per experimental group
+
+infants_added %>%
+  ungroup() %>%
+  select(id, dom_lang, best_lang, per_eng, per_fr, per_other) %>%
+  distinct() %>%
+  group_by(dom_lang) %>%
+  summarize(per_en = mean(per_eng, na.rm = TRUE),
+            num = length(unique(id)),
+            per_fr = mean(per_fr, na.rm = TRUE),
+            per_other = mean(per_other, na.rm = TRUE)) %>%
+  mutate(per_en_and_fr = per_en + per_fr)
+
+#how many with each of eng or fr as best lang?
+infants_added %>% distinct(id, dom_lang, best_lang) %>% count(dom_lang, best_lang)
+
+# total number of participants by gender per experimental group
+final_sample_updated %>%
+  group_by(gender_written) %>%
+  summarize(n = length(unique(id))) %>%
+  filter(gender_written == "female")
+```
+
+
 ### 5.2.2. Training
 
 ```{r}
@@ -593,6 +756,9 @@ data_lmer_training_eye <- make_eyetrackingr_data(data = data_lmer_training,
                                                  aoi_columns = "training_AOI",
                                                  treat_non_aoi_looks_as_missing = TRUE)
 
+data_lmer_training_eye <- data_lmer_training_eye %>%
+  filter(id %in% final_sample_ids_updated$id)
+
 data_lmer_training_eye %>% count(training_AOI, trackloss)
 
 # window of analysis
@@ -602,18 +768,18 @@ data_lmer_training_eye_window <- subset_by_window(data = data_lmer_training_eye,
                                                   rezero = FALSE)
 
 # clean by trackloss
-trackloss_analysis(data_lmer_training_eye_window)
-
-data_lmer_training_eye_window_clean <- clean_by_trackloss(data = data_lmer_training_eye_window,
-                                                          trial_prop_thresh = (1 - 750/(11000 - 3700))) # Need at least 750 ms of looking to the screen
+# trackloss_analysis(data_lmer_training_eye_window)
+# 
+# data_lmer_training_eye_window_clean <- clean_by_trackloss(data = data_lmer_training_eye_window,
+#                                                           trial_prop_thresh = (1 - 750/(11000 - 3700))) # Need at least 750 ms of looking to the screen
 
 # Participants excluded due to trackloss
-n_distinct(data_lmer_training_eye_window$id) - n_distinct(data_lmer_training_eye_window_clean$id) # 2
+#n_distinct(data_lmer_training_eye_window$id) - n_distinct(data_lmer_training_eye_window_clean$id) # 2
 
 # final sample size for Training
-n_distinct(data_lmer_training_eye_window_clean$id) # 161
+#n_distinct(data_lmer_training_eye_window_clean$id) # 149
 
-# summary of total looking time for each trial
+# summary of total looking time for each participant on each trial
 data_lmer_training_agg_id <- 
   data_lmer_training_eye_window_clean %>% 
   make_time_window_data(data = ., 
@@ -624,7 +790,7 @@ data_lmer_training_agg_id <-
                         summarize_by = "id") %>% 
   mutate(looking_time = SamplesInAOI * 16.6) # assuming 60Hz
 
-## summary by participant only
+## summary by participant averaged across trials
 data_lmer_training_agg_id2 <- 
   data_lmer_training_agg_id %>% 
   group_by(id) %>% 
@@ -674,7 +840,7 @@ data_lmer_test_agg_id <-
   mutate(trial_lang = as_factor(trial_lang))
 
 # final sample
-data_lmer_test_agg_id %>% distinct(id) %>% count() # 155 participants
+data_lmer_test_agg_id %>% distinct(id) %>% count() # 151 participants
 
 # distribution of proportion of looking
 hist(data_lmer_test_agg_id$Prop)
@@ -772,7 +938,7 @@ We started with the maximal structure, having words as random slopes and partici
 
 *DV*:
 
-Centered DV: `looking proportion to target - chance (0.5)`, 0 correspond to chance performance, negative indicates more looks **away** from target, positive indicate looks **towards** the target.
+Centered DV: `looking proportion to target - chance (0.5)`, 0 corresponds to chance performance, negative indicates more looks **away** from target, positive indicate looks **towards** the target.
 
 ## 7.1. Testing the random structure 
 
