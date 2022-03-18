@@ -32,7 +32,7 @@ library(effectsize)
 ```
 #1.1. Load dataset
 ```{r}
-load(here("data/2021-11-04_data_ready_for_analysis.Rda"))
+load(here("data/2022-02-10_data_ready_for_analysis.Rda"))
 #load(here("data/OLD2021-10-21_data_ready_for_analysis.Rda"))
 #write.csv(dataset, file = "data_ready_for_analysis.csv") # generates a 1.6GB file
 
@@ -61,6 +61,9 @@ data_keepers_trad <- dataset %>% filter(keeper_traditional == 1)
 participants <- read_csv(here("data", "2021-11-04_participant_data_for_upload.csv")) %>% 
 #participants <- read_csv(here("data", "OLD_participants_data.csv")) %>% 
   filter(!is.na(baby_id))#288 total 
+
+da_estrela_keepers <- read_csv(here("data", "da_estrela_original_keepers.csv"))
+
 ```
 #1.2.1. Counting number of excluded participants and the reason for exclusion
 ```{r}
@@ -196,6 +199,12 @@ response_window_test_trad <- subset_by_window(data_keepers_trad_test,
                                     window_end_time = 10000, #End of trial. Approx. 10 seconds
                                     rezero = FALSE)
 
+
+prename_pref_window_test_trad <- subset_by_window(data_keepers_trad_test, 
+                                    window_start_time = 0, #beginning of trial
+                                    window_end_time = 3000, #first word onset
+                                    rezero = FALSE)
+
 ```
 ##2.6. Trackloss
 #2.6.1. Getting rid of rows with trackloss within window of analysis for test
@@ -222,13 +231,15 @@ length(unique(data_test_trad$id)) #final sample size for traditional analysis
 
 length(unique(response_window_test_trad$id)) - length(unique(data_test_trad$id)) #number of participants excluded because they don't have data for both words for test
 ```
+
+
 ## DESCRIPTIVES
 
 ```{r descriptives}
 
 #---------------------------------------------------------TRADITIONAL
 
-final_sample_ids <- data_test_trad %>% select(id, experiment) %>% distinct() %>% mutate(id = as.character(id)) %>% ungroup() #109 participants
+final_sample_ids <- data_test_trad %>% select(id, experiment) %>% distinct() %>% mutate(id = as.character(id)) %>% ungroup() #110 participants
 
 final_sample <- final_sample_ids %>%
   left_join(participants, by = c("id" = "recording_name")) %>%
@@ -320,8 +331,75 @@ final_sample %>%
   summarize(n = length(unique(id))) %>%
   filter(gender_written == "female")
 
-```
+# How many of our final sample were in Da Estrela's keepers?
 
+final_sample_ids %>% 
+  filter(id %in% da_estrela_keepers$id) %>%
+  nrow()
+
+# For kids with any exposure to a thrid language, what are the stats?
+
+participants %>% 
+  filter(recording_name %in% final_sample_ids$id) %>% 
+  filter(lang_group != "Monolingual") %>%
+  filter(per_eng>0 & per_fr>0 & per_other>0) %>%
+  pivot_longer(per_eng:per_other, names_to = "lang_source", values_to = "per_exposure") %>%
+  group_by(recording_name) %>%
+  mutate(min_lang = min(per_exposure)) %>% 
+  ungroup() %>%
+  pivot_wider(names_from = "lang_source", values_from = "per_exposure") %>%
+  summarize(mean=mean(min_lang),
+            sd=sd(min_lang))
+
+
+```
+## Prenaming Preferences
+
+```{r}
+
+prename_data <- prename_pref_window_test_trad %>%
+  filter(id %in% final_sample_ids$id) %>%
+  mutate(looking_at_kem = case_when(target_word == "kem" & target_AOI == TRUE ~ 1,
+                                    target_word == "bos" & distractor_AOI == TRUE ~ 1,
+                                    target_word == "kem" & distractor_AOI == TRUE ~ 0,
+                                    target_word == "bos" & target_AOI == TRUE ~ 0),
+         looking_at_bos = case_when(target_word == "bos" & target_AOI == TRUE ~ 1,
+                                    target_word == "kem" & distractor_AOI == TRUE ~ 1,
+                                    target_word == "bos" & distractor_AOI == TRUE ~ 0,
+                                    target_word == "kem" & target_AOI == TRUE ~ 0)) %>% 
+  group_by(id, lang_group, condition, experiment) %>%
+  summarize(pref_kem = mean(looking_at_kem == TRUE, na.rm = TRUE),
+         pref_bos = mean(looking_at_bos == TRUE, na.rm = TRUE)) %>%
+  pivot_longer(c("pref_kem", "pref_bos"), names_to = c("object"), values_to = "prop") %>%
+  mutate(object = str_remove(object, "pref_")) %>%
+  ungroup() 
+
+prename_data %>%
+  do(broom::tidy(t.test(.$prop ~ .$object, paired = TRUE, alternative = "two.sided"))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1))
+
+#different way to get the same result:
+prename_data %>%
+  filter(object == "kem") %>%
+  do(broom::tidy(t.test(.$prop, mu = 0.5, data = .))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+
+prename_data %>%
+  group_by(object) %>%
+  summarize(mean_prop = mean(prop),
+            sd_prop = sd(prop))
+
+
+baseline_preference <- prename_data %>%
+  select(id, object, prop) %>%
+  pivot_wider(names_from = "object", values_from = "prop") %>%
+  rename(preference_kem = kem, 
+         preference_bos = bos)
+
+#do it with proportion instead of average ms looking time
+#can account for prenaming pref by subtracting each child's preference score from themselves before running models - diff between Prop and baseline score for each child (their baseline, ex. would be bos 45% of time in prenaming phase. How much more did they look at KEM than their baseline (prenaming) - per kid) For each kid, baseline preference score, for each trial, subtract performance from baseline. Comapre to 0 instead of 50%.
+  
+```
 
 ##3. PLANNED ANALYSES
 
@@ -376,7 +454,7 @@ data_test_participant_summary_trad <- describe_data(data_test_trad,
 
 data_test_participant_summary_trad_single_lang <- describe_data(data_test_trad, 
                 describe_column = "target_AOI", 
-                group_columns = c("id", "lang_group", "familiarity", "trial_type", "best_lang", "per_carrier_lang", "condition", "stimulus_to_baby", "trad_analysis_group", "first_word_presented_training", "experiment")) %>%
+                group_columns = c("id", "lang_group", "familiarity", "trial_type", "target_word", "best_lang", "per_carrier_lang", "condition", "stimulus_to_baby", "trad_analysis_group", "first_word_presented_training", "experiment")) %>%
   mutate(total_ms = (1000/60)*N) %>%
   mutate(looking_ms = total_ms * Mean) %>%
   arrange(lang_group) %>%
@@ -409,7 +487,9 @@ data_test_prop_looking_by_word_trad <- make_time_window_data(data_test_trad,
 
 data_test_participant_summary_trad %>%
   group_by(trad_analysis_group, familiarity, stimulus_to_baby, condition, experiment) %>%
-  summarise(target.mean = mean(Mean), target.sd = sd(Mean), n = length(unique(id)))
+  summarise(target.mean = mean(Mean), 
+            target.sd = sd(Mean), 
+            n = length(unique(id)))
 
 #means by word for single-lang condition
 data_test_participant_summary_trad %>%
@@ -424,6 +504,8 @@ data_test_participant_summary_trad %>% ungroup() %>% select(id, trad_analysis_gr
 ```
 #3.3.3. Run t-tests against chance for each language group in each condition
 ```{r}
+
+#instead of Mean, use corrected percentage compared to baseline, instead of .5 compare to 0
 data_test_participant_summary_trad %>%
   filter(condition == "dual_lang") %>% 
   group_by(trad_analysis_group, familiarity, condition, experiment) %>%
@@ -437,6 +519,57 @@ data_test_participant_summary_trad_single_lang %>%
   mutate(cohen_d = statistic/sqrt(parameter +1)) 
 
 ```
+
+#3.3.35. Run t-tests corrected for prenaming preference against 0 for each language group in each condition
+```{r}
+
+#instead of Mean, use corrected percentage compared to baseline, instead of .5 compare to 0
+data_test_participant_summary_trad %>%
+  left_join(baseline_preference, by = "id") %>% 
+  mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
+                                   target_word == "bos" ~ Mean - preference_bos)) %>% 
+  filter(condition == "dual_lang") %>% 
+  group_by(trad_analysis_group, familiarity, condition, experiment) %>%
+  do(broom::tidy(t.test(.$compare_value, mu = 0, data = .))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+
+data_test_participant_summary_trad_single_lang %>%
+  left_join(baseline_preference, by = "id") %>% 
+  mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
+                                   target_word == "bos" ~ Mean - preference_bos)) %>% 
+  filter(condition != "dual_lang") %>% 
+  group_by(trad_analysis_group, condition, familiarity, experiment, target_word) %>%
+  do(broom::tidy(t.test(.$compare_value , mu = 0, data = .))) %>%
+  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+
+```
+
+## Means SDs
+```{r}
+
+data_test_participant_summary_trad %>%
+  left_join(baseline_preference, by = "id") %>% 
+  mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
+                                   target_word == "bos" ~ Mean - preference_bos)) %>% 
+  filter(condition == "dual_lang") %>% 
+  group_by(trad_analysis_group, familiarity, condition, experiment) %>%
+  summarize(mean_compare_value = mean(compare_value),
+            sd_compare_value = sd(compare_value),
+            n = length(unique(id)))
+  
+
+data_test_participant_summary_trad_single_lang %>%
+  left_join(baseline_preference, by = "id") %>% 
+  mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
+                                   target_word == "bos" ~ Mean - preference_bos)) %>% 
+  filter(condition != "dual_lang") %>% 
+  group_by(trad_analysis_group, familiarity, condition, experiment, target_word) %>%
+  summarize(mean_compare_value = mean(compare_value),
+            sd_compare_value = sd(compare_value),
+            n = length(unique(id)))
+
+```
+
 
 ##4.GRAPHS
 
@@ -546,6 +679,53 @@ ggplot(data = data_test_summarized_mono, aes(x=x_labels,y=Prop, fill= x_labels, 
 #ggsave(here("figures/single_language_condition.png"))
 
 ```
+##4.3.  Time series graph
+```{r}
+
+# from Audacity, looks like "bos" utterances occur at 3000ms, 5450ms, and 7850ms.
+# for "kem" utterances, it's 3150ms, 5500ms, and 7810ms
+
+utterances <- tibble(target_word = c(rep("kem", 3), rep("bos", 3)), word_utterance = c(rep(1:3, 2)), onset = c(rep(c(3075, 5475, 7830), 2)), offset = c(rep(c(3550, 6075, 8425), 2)))
+
+data_time_series <- data_keepers_trad_test %>%
+  filter(id %in% final_sample_ids$id) %>%
+  filter(trial_from_zero >= 0 & trial_from_zero <= 10000) %>%
+  make_time_sequence_data(time_bin_size = 200,
+                          predictor_columns = c("lang_group", "familiarity", "trial_type", "trial_number_of_type", "per_carrier_lang", "condition", "trad_analysis_group", "target_word", "first_word_presented_training", "experiment"),
+                          aois = c("target_AOI", "distractor_AOI"))
+
+
+data_time_series %>%
+  #filter(target_word == "bos") %>%
+  pivot_wider(names_from = AOI, values_from = Prop) %>%
+  group_by(condition, target_word, Time) %>% 
+  summarise(target = mean(target_AOI, na.rm=TRUE),
+            distractor = mean(distractor_AOI, na.rm = TRUE)) %>% 
+  ungroup() %>%
+  mutate(text = case_when(target_word == "bos" & condition == "dual_lang" & row_number() == 5 ~ "Shaded areas indicate\ntarget word utterance",
+                          TRUE ~ ""),
+         condition = case_when(condition == "dual_lang" ~ "Dual Language",
+                               condition == "single_lang_foreign" ~ "Single Language (Foreign)",
+                               condition == "single_lang_native" ~ "Single Language (Native)"
+                               )) %>%
+  rename(`Target word` = target_word) %>%
+  #pivot_longer(cols = c(target, distractor), names_to = "aoi", values_to = "prop_looking") %>%
+  
+  ggplot(aes(x = Time, y = target, color = `Target word`)) + 
+  geom_hline(yintercept = .5, color = "blue") +
+  geom_text(aes(label = text), x = 5000, y = .9, color = "black", show.legend = FALSE) +
+  annotate("rect", xmin = utterances$onset[1], xmax = utterances$offset[1], ymin = 0, ymax = 1, fill = "#2DA2BB", alpha = .2, colour = "transparent", show.legend = FALSE) +
+  annotate("rect", xmin = utterances$onset[2], xmax = utterances$offset[2], ymin = 0, ymax = 1, fill = "#2DA2BB", alpha = .2, colour = "transparent", show.legend = FALSE) +
+  annotate("rect", xmin = utterances$onset[3], xmax = utterances$offset[3], ymin = 0, ymax = 1, fill = "#2DA2BB", alpha = .2, colour = "transparent", show.legend = FALSE) +
+  geom_line(show.legend = FALSE) +
+  facet_grid(condition~`Target word`) +
+  ggtitle("Time Course of Infant Looking During Test Trials") +
+  theme_pubclean()
+  
+ggsave(here("figures", "time_course_plot.png"), width = 10)
+
+```
+
 ## 5. UPDATED ANALYSES
 
 The following analyses combine data from all (valid) participants in the study (*N* = 155), regardless of grouping characteristics (e.g., monolingual or bilingual), to investigate the effects of: 
@@ -592,7 +772,8 @@ data_lmer <-
     dom_lang == "other" & best_lang != carrier_language ~ "foreign",
     lang_group == "bilingual_freng" & carrier_language != dom_lang ~ "nondominant",
     lang_group == "bilingual_other_dom" & carrier_language != dom_lang ~ "foreign",
-    TRUE ~ "other"))
+    TRUE ~ "other")) %>%
+  left_join(baseline_preference, by = "id")
 
 # vocabulary info
 vocab_raw <- read.csv(here("data/vocabulary_data.csv"))
@@ -643,7 +824,7 @@ data_lmer_test_eye_window_clean <- clean_by_trackloss(data = data_lmer_test_eye_
 n_distinct(data_lmer_test_eye_window$id) - n_distinct(data_lmer_test_eye_window_clean$id) # 8
 
 # final sample size for Test
-n_distinct(data_lmer_test_eye_window_clean$id) # 151 
+n_distinct(data_lmer_test_eye_window_clean$id) # 148
 ```
 ## DESCRIPTIVES UPDATED ANALYSIS
 
@@ -741,6 +922,14 @@ final_sample_updated %>%
   group_by(gender_written) %>%
   summarize(n = length(unique(id))) %>%
   filter(gender_written == "female")
+
+
+# How many of our final sample were in Da Estrela's keepers?
+
+final_sample_ids_updated %>% 
+  filter(id %in% da_estrela_keepers$id) %>%
+  nrow()
+
 ```
 
 
