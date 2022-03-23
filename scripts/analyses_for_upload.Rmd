@@ -4,31 +4,38 @@ output: html_notebook
 ---
 ##1. SETUP
 ```{r}
-#source("groundhog_library.R")
+# we had several compabatibility issues when trying to load packages using groundhog. 
+# we decided to inform the users about our R and packages versions below. 
+# however, if you want to give it a try on groundhog, just turn it to TRUE 
+groundhog_load <- FALSE
 
+if(groundhog_load == TRUE){source("groundhog_library.R")} else{
+  
+# R version 4.1.2 (2021-11-01)
+
+# limit sceintifc notation
 options(scipen = 999)
 
-## 1. Load packages
-library(weights)
-library(eyetrackingR)
-library(tidyverse)
-library(lme4)
-library(lmerTest)
-library(broom)
-library(corrr)
-library(forcats)
-library(ez)
-library(dplyr)
-library(ggpubr)
-library(tidylog)
-library(janitor)
-library(here)
-library(patchwork)
-library(sjPlot)
-library(car)
-library(metafor)
-
-library(effectsize)
+## 1. Load packages - version 
+library(weights) # 1.0.4 
+library(eyetrackingR) # 0.2.0
+library(tidyverse) # 1.3.1
+library(lme4) # 1.1-28 
+library(lmerTest) # 3.1-3
+library(broom) # 0.7.10
+library(corrr) # 0.4.3 
+library(ez) # 4.4-0
+library(ggpubr) # 0.4.0
+library(tidylog) # 1.0.2 
+library(janitor) # 2.1.0
+library(here) # 1.0.1 
+library(patchwork) # 1.1.1
+library(sjPlot) # 2.8.10
+library(car) # 3.0-12
+library(metafor) # 3.0-2
+library(effectsize) # 0.6.0.1
+  
+}
 ```
 #1.1. Load dataset
 ```{r}
