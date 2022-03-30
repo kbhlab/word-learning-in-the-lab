@@ -6,15 +6,12 @@ output: html_notebook
 ```{r}
 # we had several compabatibility issues when trying to load packages using groundhog. 
 # we decided to inform the users about our R and packages versions below. 
-# however, if you want to give it a try on groundhog, just turn it to TRUE 
+# however, if you want to give it a try on groundhog, just set the following variable to TRUE 
 groundhog_load <- FALSE
 
 if(groundhog_load == TRUE){source("groundhog_library.R")} else{
   
 # R version 4.1.2 (2021-11-01)
-
-# limit sceintifc notation
-options(scipen = 999)
 
 ## 1. Load packages - version 
 library(weights) # 1.0.4 
@@ -36,11 +33,14 @@ library(metafor) # 3.0-2
 library(effectsize) # 0.6.0.1
   
 }
+
+# limit sceintifc notation
+options(scipen = 999)
+
 ```
 #1.1. Load dataset
 ```{r}
 load(here("data/2022-02-10_data_ready_for_analysis.Rda"))
-#load(here("data/OLD2021-10-21_data_ready_for_analysis.Rda"))
 #write.csv(dataset, file = "data_ready_for_analysis.csv") # generates a 1.6GB file
 
 dataset <- dataset %>%
@@ -72,25 +72,11 @@ participants <- read_csv(here("data", "2021-11-04_participant_data_for_upload.cs
 da_estrela_keepers <- read_csv(here("data", "da_estrela_original_keepers.csv"))
 
 ```
-#1.2.1. Counting number of excluded participants and the reason for exclusion
+#1.3. Counting number of excluded participants and the reason for exclusion
 ```{r}
 participants %>%
   mutate(excl = word(reason_exclusion)) %>%
   count(excl) #NAs should equal 130
-
-```
-#1.3 Excluding participants who do not meet language criteria
-```{r}
-
-#------------------------This section no longer does anything because we updated the exclusion reasons in the MSL
-# data_keepers_trad <- data_keepers_trad %>%
-#   mutate(lang_ok = case_when(lang_group == "bilingual_freng" & ((per_eng >= 25 & per_fr >= 50) | (per_eng >= 50 & per_fr >= 25)) & per_other <= 20 ~ 1,
-#                              intended_study == "Novel_14" & lang_group == "bilingual_other_dom" & (per_eng >= 50 | per_fr >= 50) & per_other >= 25 & (per_eng <= 5 | per_fr <= 5) ~ 1,
-#                              intended_study == "Novel_14" & lang_group == "bilingual_other_nondom" & per_other >= 50 & (per_eng >= 25 | per_fr >= 25) & (per_eng <= 5 | per_fr <= 5) ~ 1,
-#                              lang_group == "monolingual" & (per_eng >= 90 | per_fr >= 90) ~ 1,
-#                              TRUE ~ 0)) %>% # 44 participants don't meet language criteria 
-#   distinct(id, .keep_all = TRUE) %>%
-# filter(lang_ok == 1)
 
 ```
 #1.4 Create language groupings
@@ -535,10 +521,10 @@ data_test_participant_summary_trad %>%
   left_join(baseline_preference, by = "id") %>% 
   mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
                                    target_word == "bos" ~ Mean - preference_bos)) %>% 
-  filter(condition == "dual_lang") %>% View()
+  filter(condition == "dual_lang") %>% 
   group_by(trad_analysis_group, familiarity, condition, experiment) %>%
   do(broom::tidy(t.test(.$compare_value, mu = 0, data = .))) %>%
-  mutate(cohen_d = statistic/sqrt(parameter +1)) 
+  mutate(cohen_d = statistic/sqrt(parameter +1))  
 
 data_test_participant_summary_trad_single_lang %>%
   left_join(baseline_preference, by = "id") %>% 
@@ -729,7 +715,7 @@ data_time_series %>%
   ggtitle("Time Course of Infant Looking During Test Trials") +
   theme_pubclean()
   
-ggsave(here("figures", "time_course_plot.png"), width = 10)
+#ggsave(here("figures", "time_course_plot.png"), width = 10)
 
 ```
 
@@ -1310,7 +1296,7 @@ tab_model(lmer_mod10, lmer_mod11, lmer_mod12,
           show.re.var = T,
           show.icc = T,
           title = "Joint table: % exposure, vocabulary, looking time"#,
-          #file = here("figures/table_lmer_training.doc")
+          #file = here("figures/table_lmer_exp_vocab_training.doc")
           )
 
 
@@ -1319,21 +1305,21 @@ tab_model(lmer_mod10_diff,
           show.re.var = T,
           show.icc = T,
           title = "Exposure to target (%)"#,
-          #file = here("figures/table_lmer_exposure.doc")
+          #file = here("figures/table_lmer_exposure_diff.doc")
           )
 
 tab_model(lmer_mod11_diff,
           show.re.var = T,
           show.icc = T,
           title = "Vocabulary in target language (n)"#,
-          #file = here("figures/table_lmer_vocab.doc")
+          #file = here("figures/table_lmer_vocab_diff.doc")
           )
 
 tab_model(lmer_mod12_diff,
           show.re.var = T,
           show.icc = T,
           title = "Total looking time during Training"#,
-          #file = here("figures/table_lmer_training.doc")
+          #file = here("figures/table_lmer_training_diff.doc")
           )
 
 # joint table
@@ -1341,7 +1327,7 @@ tab_model(lmer_mod10_diff, lmer_mod11_diff, lmer_mod12_diff,
           show.re.var = T,
           show.icc = T,
           title = "Joint table: % exposure, vocabulary, looking time"#,
-          #file = here("figures/table_lmer_training.doc")
+          #file = here("figures/table_lmer_exp_vocab_training_diff.doc")
           )
 
 # separate models for each condition
@@ -1376,7 +1362,26 @@ tab_model(lmer_mod10_two_lang, lmer_mod10_one_lang_all,
           show.re.var = T,
           show.icc = T,
           title = "Exposure to target (%): 2-lang, 1-lang"#,
-          #file = here("figures/table_lmer_exposure.doc")
+          #file = here("figures/table_lmer_exposur_by_conditione.doc")
+          )
+
+# separate models for each condition - difference score/prenaming pref
+# exposure
+lmer_mod10_two_lang_diff <- 
+  data_lmer_test_agg_id %>% 
+  filter(condition == "two_lang") %>% 
+  lme4::lmer(difference_score ~ per_exposure_target + (1|target_word), 
+                         data = .) # converge 
+lmer_mod10_one_lang_all_diff <- 
+  data_lmer_test_agg_id %>% 
+  filter(str_detect(condition, "one_lang")) %>% 
+  lme4::lmer(difference_score ~ per_exposure_target + (1|target_word), 
+                         data = .) # converge 
+tab_model(lmer_mod10_two_lang_diff, lmer_mod10_one_lang_all_diff,
+          show.re.var = T,
+          show.icc = T,
+          title = "Exposure to target (%): 2-lang, 1-lang"#,
+          #file = here("figures/table_lmer_exposure_by_condition_diff.doc")
           )
 
 # vocabulary
@@ -1408,7 +1413,7 @@ tab_model(lmer_mod11_two_lang, lmer_mod11_one_lang_all,
           show.re.var = T,
           show.icc = T,
           title = "Vocabulary: 2-lang, 1-lang"#,
-          #file = here("figures/table_lmer_exposure.doc")
+          #file = here("figures/table_lmer_condition_vocab.doc")
           )
 
 # looking time during training
@@ -1441,7 +1446,7 @@ tab_model(lmer_mod12_two_lang, lmer_mod12_one_lang_all,
           show.re.var = T,
           show.icc = T,
           title = "Looking during Training: 2-lang, 1-lang"#,
-          #file = here("figures/table_lmer_exposure.doc")
+          #file = here("figures/table_lmer_by_condition_training.doc")
           )
 
 # intercept only - for later effect size calculation
@@ -1453,7 +1458,7 @@ tab_model(lmer_null,
           show.re.var = T,
           show.icc = T,
           title = "Null (random effects only)"#,
-          #file = here("figures/table_lmer_exposure.doc")
+          #file = here("figures/table_lmer_null.doc")
           )
 ```
 
