@@ -8,7 +8,7 @@ Hilary Killam
 
 Krista Byers-Heinlein
 
-This repository contains the analysis code associated with the research manuscript *Word learning in the lab is hard!*. You can find the associated OSF project, including raw data files and the stimuli used in the studies, at: https://osf.io/upy7f/
+This repository contains the analysis code associated with the research manuscript *Word learning in 14-month-old monolinguals and bilinguals*. You can find the associated OSF project, including raw data files and the stimuli used in the studies, at: https://osf.io/upy7f/
 
 ### Repository overview
 
