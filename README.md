@@ -1,4 +1,4 @@
-## Word learning in the lab is hard! Data from 14-month-old monolingual and bilingual infants
+## Word learning in 14-month-old monolinguals and bilinguals: Challenges and methodological opportunities
 
 Ana Maria Gonzalez-Barrero
 
