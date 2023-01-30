@@ -31,6 +31,8 @@ library(sjPlot) # 2.8.10
 library(car) # 3.0-12
 library(metafor) # 3.0-2
 library(effectsize) # 0.6.0.1
+library(pwr) # 1.3-0
+library(simr) #1.0.6
   
 }
 
@@ -1241,6 +1243,11 @@ lmer_mod11 <- lme4::lmer(Prop - .5 ~ vocab_target  + (1|target_word),
 lmer_mod12 <- lme4::lmer(Prop - .5 ~ total_looking_time_training  + (1|target_word), 
                         data = data_lmer_test_agg_id) # converge
 
+# single model w/ all regressors
+lmer_mod13 <- lme4::lmer(Prop - .5 ~ per_exposure_target + vocab_target + total_looking_time_training + (1|target_word), 
+                        data = data_lmer_test_agg_id) # converge
+
+# diff as dv
 lmer_mod10_diff <- lme4::lmer(difference_score ~ per_exposure_target  + (1|target_word), 
                          data = data_lmer_test_agg_id) # converge 
 
@@ -1259,6 +1266,9 @@ ranef(lmer_mod11)
 
 summary(lmer_mod12)
 ranef(lmer_mod12)
+
+summary(lmer_mod13)
+ranef(lmer_mod13)
 
 summary(lmer_mod10_diff)
 ranef(lmer_mod10_diff)
@@ -1291,8 +1301,16 @@ tab_model(lmer_mod12,
           #file = here("figures/table_lmer_training.doc")
           )
 
+tab_model(lmer_mod13,
+          show.re.var = T,
+          show.icc = T,
+          title = "Total looking time during Training"#,
+          #file = here("figures/table_lmer_all_pred.doc")
+          )
+
+
 # joint table
-tab_model(lmer_mod10, lmer_mod11, lmer_mod12,
+tab_model(lmer_mod10, lmer_mod11, lmer_mod12, lmer_mod13,
           show.re.var = T,
           show.icc = T,
           title = "Joint table: % exposure, vocabulary, looking time"#,
@@ -1300,7 +1318,7 @@ tab_model(lmer_mod10, lmer_mod11, lmer_mod12,
           )
 
 
-
+# diff models
 tab_model(lmer_mod10_diff,
           show.re.var = T,
           show.icc = T,
@@ -1496,9 +1514,9 @@ Tsui, A. S. M., Byers-Heinlein, K., & Fennell, C. T. (2019). Associative word le
 
 # 8. Looking while listening
 
-8.1 Calculate the effect size for our sample.
+## 8.1 Calculate the effect size for our sample.
 
-8.1.1 Overall traditional *Cohen's d*, with 1 observation (average) per participant and assuming independence.
+### 8.1.1 Overall traditional *Cohen's d*, with 1 observation (average) per participant and assuming independence.
   
 ```{r}
 # aggregate data by participant (1 proportion per participant)
@@ -1524,7 +1542,7 @@ d_stats <-
             )
 ```
 
-8.1.2 Approximate effect size for mixed models: $\omega^2$
+### 8.1.2 Approximate effect size for mixed models: $\omega^2$
 
 ```{r}
 # calculate omega squared as an approximate effect size for mixed models
@@ -1537,7 +1555,7 @@ omga_vocab
 omga_training
 ```
 
-8.1.3 Approximate effect size from Brysbaert & Stevens (2018) - http://doi.org/10.5334/joc.10 
+### 8.1.3 Approximate effect size from Brysbaert & Stevens (2018) - http://doi.org/10.5334/joc.10 
 $$
 \begin{array}{l}
 d = \,\,\frac{{difference\, between\, the\, means}}{{\sqrt {varintercep{t_{part}} + varintercep{t_{item}} + varslop{e_{part}} + varslop{e_{item}} + va{r_{residual}}}}}\\
@@ -1551,6 +1569,30 @@ summary(lmer_null)
 # mixed d
 mixed_d <- 0.02252 / sqrt(0.002901 + 0.063872)
 round(mixed_d, 2)
+```
+
+### 8.1.4 Observed effect size based on simulation
+
+We will simulate and approximate the effect size for a single predictor at a time.
+
+```{r}
+# number of simulations
+nsim = 500
+
+# predictors: 
+pwr_sim_lmer_mod10 <- simr::powerSim(lmer_mod10, # per_exposure_target
+                                     nsim = nsim) 
+
+pwr_sim_lmer_mod11 <- simr::powerSim(lmer_mod11, # vocab_size
+                                     nsim = nsim) 
+
+pwr_sim_lmer_mod12 <- simr::powerSim(lmer_mod12, # looking during training
+                                     nsim = nsim) 
+
+# effect sizes
+pwr_sim_lmer_mod10 # 0.000004
+pwr_sim_lmer_mod11 # 0.00011
+pwr_sim_lmer_mod12 # -0.0000001
 ```
 
 # 8.2. Switch task
@@ -1608,5 +1650,46 @@ switch_mini_ma$b
 # forest plot
 metafor::forest(switch_mini_ma)
 ```
+
+## 8.3. Power analysis
+
+Here we estimate the sample size necessary to detect word learning significantly above chance using the effect size of the Switch Task. 
+We start calculating Power for the t-tests, then we estimate power for mixed-models.
+
+### 8.3.1. Traditional analysis: t-test
+
+```{r}
+# power, t-test, one-sample against chance
+pwr::pwr.t.test(d = 0.33, # ES switch task
+                sig.level = 0.05, # alpha
+                power = 0.80, # 1-beta
+                type = "one.sample",
+                alternative="two.sided")
+
+## required sample size = 75 participants
+```
+
+### 8.3.1. Updated analysis: mixed-models
+
+One predictor at a time.
+
+```{r}
+# power curve for mixed-models
+pc_lmer_mod10 <- powerCurve(lmer_mod10)
+pc_lmer_mod10 <- powerCurve(lmer_mod11)
+pc_lmer_mod10 <- powerCurve(lmer_mod12)
+
+# power and 95% CI
+print(pc_lmer_mod10)
+print(pc_lmer_mod11)
+print(pc_lmer_mod12)
+
+# power curve
+plot(pc_lmer_mod10)
+plot(pc_lmer_mod11)
+plot(pc_lmer_mod12)
+
+```
+
 
 # END OF ANALYSIS SCRIPT

@@ -38,7 +38,9 @@ gh_pkgs <-
     "ez",
     "ggpubr",
     "effectsize",
-    "lmerTest")
+    "lmerTest",
+    "pwr",
+    "simr")
 
 # last update
 gh_date <- "2021-08-01" # R-4.1.0
