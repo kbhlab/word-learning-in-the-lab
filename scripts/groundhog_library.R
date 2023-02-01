@@ -40,7 +40,8 @@ gh_pkgs <-
     "effectsize",
     "lmerTest",
     "pwr",
-    "simr")
+    "simr",
+    "TOSTER")
 
 # last update
 gh_date <- "2021-08-01" # R-4.1.0

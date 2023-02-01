@@ -32,13 +32,13 @@ library(car) # 3.0-12
 library(metafor) # 3.0-2
 library(effectsize) # 0.6.0.1
 library(pwr) # 1.3-0
-library(simr) #1.0.6
-  
+library(simr) # 1.0.6
+library(TOSTER) # 0.6.0
+
 }
 
 # limit sceintifc notation
 options(scipen = 999)
-
 ```
 #1.1. Load dataset
 ```{r}
@@ -1512,11 +1512,11 @@ Tsui, A. S. M., Byers-Heinlein, K., & Fennell, C. T. (2019). Associative word le
 ***
 
 
-# 8. Looking while listening
+# 8. Effect size and power analysis
 
-## 8.1 Calculate the effect size for our sample.
+## 8.1. Looking while listening - Effect size
 
-### 8.1.1 Overall traditional *Cohen's d*, with 1 observation (average) per participant and assuming independence.
+### 8.1.1. Overall traditional *Cohen's d*, with 1 observation (average) per participant and assuming independence.
   
 ```{r}
 # aggregate data by participant (1 proportion per participant)
@@ -1542,7 +1542,7 @@ d_stats <-
             )
 ```
 
-### 8.1.2 Approximate effect size for mixed models: $\omega^2$
+### 8.1.2. Approximate effect size for mixed models: $\omega^2$
 
 ```{r}
 # calculate omega squared as an approximate effect size for mixed models
@@ -1555,7 +1555,7 @@ omga_vocab
 omga_training
 ```
 
-### 8.1.3 Approximate effect size from Brysbaert & Stevens (2018) - http://doi.org/10.5334/joc.10 
+### 8.1.3. Approximate effect size from Brysbaert & Stevens (2018) - http://doi.org/10.5334/joc.10 
 $$
 \begin{array}{l}
 d = \,\,\frac{{difference\, between\, the\, means}}{{\sqrt {varintercep{t_{part}} + varintercep{t_{item}} + varslop{e_{part}} + varslop{e_{item}} + va{r_{residual}}}}}\\
@@ -1571,7 +1571,7 @@ mixed_d <- 0.02252 / sqrt(0.002901 + 0.063872)
 round(mixed_d, 2)
 ```
 
-### 8.1.4 Observed effect size based on simulation
+### 8.1.4. Observed effect size based on simulation
 
 We will simulate and approximate the effect size for a single predictor at a time.
 
@@ -1595,14 +1595,18 @@ pwr_sim_lmer_mod11 # 0.00011
 pwr_sim_lmer_mod12 # -0.0000001
 ```
 
-# 8.2. Switch task
-## 8.2.1. Load dataset
+## 8.2. Switch task - Effect size
+
+Here we use open data from:
+Tsui, A. S. M., Byers-Heinlein, K., & Fennell, C. T. (2019). Associative word learning in infancy: A meta-analysis of the switch task. Developmental Psychology, 55(5), 934–950. https://doi.org/10.1037/dev0000699
+
+### 8.2.1. Load dataset
 
 ```{r}
 switch_ma <- read.csv(here("data/Switch task.csv"))
 ```
 
-## 8.2.2. Filter dataset
+### 8.2.2. Filter dataset
 
 - Age: Same age range as our research, "13 months and 16 days – 15 months and 12 days"
 - Word type: "dissimilar sounding"
@@ -1620,7 +1624,7 @@ switch_ma_filtered <-
          mean_age <= max_age)
 ```
 
-## 8.2.3. Descriptive stats
+### 8.2.3. Descriptive stats
 
 - Number of studies;
 - Number of participants;
@@ -1635,7 +1639,7 @@ switch_ma_filtered %>%
             mean_age_months = mean_age_days/30.44)
 ```
 
-## 8.2.4. Estimate effect-size
+### 8.2.4. Estimate effect-size
 
 - Use the `metafor` package to run a mini-MA
 - Double check code with Metalab code (will I be able to decypher it??)
@@ -1671,13 +1675,19 @@ pwr::pwr.t.test(d = 0.33, # ES switch task
 
 ### 8.3.1. Updated analysis: mixed-models
 
+These are simulation-based power analysis, it may take some time to run them. By default, they are turned off. Turn them on using the switch in the code below. 
 One predictor at a time.
 
 ```{r}
+# switch
+run_simr <- F 
+
+if(run_simr == T){
+  
 # power curve for mixed-models
 pc_lmer_mod10 <- powerCurve(lmer_mod10)
-pc_lmer_mod10 <- powerCurve(lmer_mod11)
-pc_lmer_mod10 <- powerCurve(lmer_mod12)
+pc_lmer_mod11 <- powerCurve(lmer_mod11)
+pc_lmer_mod12 <- powerCurve(lmer_mod12)
 
 # power and 95% CI
 print(pc_lmer_mod10)
@@ -1689,7 +1699,54 @@ plot(pc_lmer_mod10)
 plot(pc_lmer_mod11)
 plot(pc_lmer_mod12)
 
+}
 ```
 
+# 9. Equivalence tests
+
+Here we intend to test if the effect size for word learning in our largest sample (*N* = 148; updated analysis) is below our smallest ES of interest. This is an approxiamte test. Keep in mind that the effect size estimated here will be most likely overstimated, because we use aggregated data (1 trial per participant). Better calculations of test statistics, p-values, and effect sizes are found under 7.2., when fitting pruned mixed-models. 
+
+
+We use the most complete dataset (updated analysis) and summarise proportion of looking to target on test trials for each participant. Following Lakens et al. (2018), we set our smallest effect size of interest (SESOI) based on the estimated ES (*d* = 0.33) of the mini meta-analysis we performed on step 8.2. We use a symmetrical interval, so our upper boundary will be *d* = 0.33 and our lower boundary will be *d* = -0.33. 
+
+Reference: 
+
+Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence Testing for Psychological Research: A Tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269. https://doi.org/10.1177/2515245918770963
+
+## 9.1. Prepare dataset
+
+```{r}
+# aggregated data, 1 trial per participant
+data_lmer_test_eq <- 
+  data_lmer_test_agg_id %>% 
+  group_by(id) %>%
+  summarise(prop = mean(Prop)) %>%
+  ungroup()
+
+head(data_lmer_test_eq)
+```
+
+## 9.2. Equivalence testing
+
+```{r}
+# sesoi
+ub_sesoi <- switch_mini_ma$b 
+lb_sesoi <- switch_mini_ma$b * -1 
+
+# tost: one-sample t-test against chance
+equiv_test <- 
+  TOSTER::t_TOST(x = data_lmer_test_eq$prop,
+                 hypothesis = "EQU", # equivalence test
+                 eqb = c(lb_sesoi, ub_sesoi), # boundaries
+                 mu = 0.5,
+                 eqbound_type = "SMD", # we use Cohen'd from MA
+                 smd_ci = "goulet")
+
+print(equiv_test)
+plot(equiv_test)
+
+# sanity check on ES of equivalence tests
+effectsize::hedges_g(data_lmer_eq$prop, mu = 0.5) # similar
+```
 
 # END OF ANALYSIS SCRIPT
