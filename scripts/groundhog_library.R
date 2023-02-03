@@ -41,7 +41,10 @@ gh_pkgs <-
     "lmerTest",
     "pwr",
     "simr",
-    "TOSTER")
+    "TOSTER",
+    "parameters",
+    "sjstats",
+    "see")
 
 # last update
 gh_date <- "2021-08-01" # R-4.1.0

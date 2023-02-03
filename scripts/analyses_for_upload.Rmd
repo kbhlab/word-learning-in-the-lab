@@ -27,13 +27,16 @@ library(tidylog) # 1.0.2
 library(janitor) # 2.1.0
 library(here) # 1.0.1 
 library(patchwork) # 1.1.1
-library(sjPlot) # 2.8.10
 library(car) # 3.0-12
 library(metafor) # 3.0-2
 library(effectsize) # 0.6.0.1
 library(pwr) # 1.3-0
 library(simr) # 1.0.6
 library(TOSTER) # 0.6.0
+library(parameters) # 0.20.2
+library(sjPlot) # 2.8.12
+library(sjstats) # 0.18.2 
+library(see) # 0.7.4
 
 }
 
@@ -1194,7 +1197,6 @@ ranef(lmer_mod6)
 
 summary(lmer_mod6.1)
 ranef(lmer_mod6.1) 
-
 ```
 
 ### 7.1.3. Pruned 2: random intercept (id)
@@ -1224,7 +1226,6 @@ ranef(lmer_mod9)
 
 summary(lmer_mod9.1)
 ranef(lmer_mod9.1) 
-
 ```
 
 ## 7.2. Pruned 3: random intercept (item) 
@@ -1574,8 +1575,13 @@ round(mixed_d, 2)
 ### 8.1.4. Observed effect size based on simulation
 
 We will simulate and approximate the effect size for a single predictor at a time.
+These are simulation-based power analysis, it may take some time to run them. By default, they are turned off. Turn them on using the switch in the code below. 
 
 ```{r}
+# switch
+run_simr <- F 
+
+if(run_simr == T){
 # number of simulations
 nsim = 500
 
@@ -1593,6 +1599,8 @@ pwr_sim_lmer_mod12 <- simr::powerSim(lmer_mod12, # looking during training
 pwr_sim_lmer_mod10 # 0.000004
 pwr_sim_lmer_mod11 # 0.00011
 pwr_sim_lmer_mod12 # -0.0000001
+
+}
 ```
 
 ## 8.2. Switch task - Effect size
@@ -1679,9 +1687,7 @@ These are simulation-based power analysis, it may take some time to run them. By
 One predictor at a time.
 
 ```{r}
-# switch
-run_simr <- F 
-
+# trun switch on and off on step 8.1.4.
 if(run_simr == T){
   
 # power curve for mixed-models
@@ -1704,29 +1710,34 @@ plot(pc_lmer_mod12)
 
 # 9. Equivalence tests
 
-Here we intend to test if the effect size for word learning in our largest sample (*N* = 148; updated analysis) is below our smallest ES of interest. This is an approxiamte test. Keep in mind that the effect size estimated here will be most likely overstimated, because we use aggregated data (1 trial per participant). Better calculations of test statistics, p-values, and effect sizes are found under 7.2., when fitting pruned mixed-models. 
-
-
-We use the most complete dataset (updated analysis) and summarise proportion of looking to target on test trials for each participant. Following Lakens et al. (2018), we set our smallest effect size of interest (SESOI) based on the estimated ES (*d* = 0.33) of the mini meta-analysis we performed on step 8.2. We use a symmetrical interval, so our upper boundary will be *d* = 0.33 and our lower boundary will be *d* = -0.33. 
+Here we intend to test if the effect size for word learning in our traditional (t-test) and updated (lmer) analysis is below our smallest ES of interest. We will perform one overall equivalence test for the traditional analysis and another using the multiple regression from the updated analysis.
 
 Reference: 
-
 Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence Testing for Psychological Research: A Tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259–269. https://doi.org/10.1177/2515245918770963
 
 ## 9.1. Prepare dataset
 
+For the traditional analysis, we are summarizing the data so each participant only have 1 trial. Proportion of looking to target is averaged. For the updated analysis, we are feeding the equivalence test with the fitted model directly. 
+
 ```{r}
-# aggregated data, 1 trial per participant
-data_lmer_test_eq <- 
-  data_lmer_test_agg_id %>% 
+# dataset from traditional analysis (1 trial per participant)
+data_eq_trad <- 
+  data_test_participant_summary_trad %>% 
   group_by(id) %>%
-  summarise(prop = mean(Prop)) %>%
+  summarise(prop = mean(Mean)) %>%
   ungroup()
 
-head(data_lmer_test_eq)
+nrow(data_eq_trad) # 110 participants
+head(data_eq_trad) 
 ```
 
 ## 9.2. Equivalence testing
+
+### 9.2.1. Traditional analysis
+
+This is an approximate test. Keep in mind that the effect size estimated here will be most likely overstimated, because we use aggregated data (1 trial per participant). Better calculations of test statistics, p-values, and effect sizes are found under 7.2., when fitting pruned mixed-models. 
+
+Following Lakens et al. (2018), we set our smallest effect size of interest (SESOI) based on the estimated ES (*d* = 0.33) of the mini meta-analysis we performed on step 8.2. We use a symmetrical interval, so our upper boundary will be *d* = 0.33 and our lower boundary will be *d* = -0.33. 
 
 ```{r}
 # sesoi
@@ -1734,19 +1745,32 @@ ub_sesoi <- switch_mini_ma$b
 lb_sesoi <- switch_mini_ma$b * -1 
 
 # tost: one-sample t-test against chance
-equiv_test <- 
-  TOSTER::t_TOST(x = data_lmer_test_eq$prop,
+equiv_test_trad <- 
+  TOSTER::t_TOST(x = data_eq_trad$prop,
                  hypothesis = "EQU", # equivalence test
                  eqb = c(lb_sesoi, ub_sesoi), # boundaries
-                 mu = 0.5,
+                 mu = 0.5, # chance level
                  eqbound_type = "SMD", # we use Cohen'd from MA
                  smd_ci = "goulet")
 
-print(equiv_test)
-plot(equiv_test)
+print(equiv_test_trad)
+plot(equiv_test_trad)
 
 # sanity check on ES of equivalence tests
-effectsize::hedges_g(data_lmer_eq$prop, mu = 0.5) # similar
+effectsize::hedges_g(data_eq_trad$prop, mu = 0.5) # similar
+```
+
+### 9.2.2. Updated analysis
+
+```{r}
+# tost: mixed-effects multiple regression
+equiv_test_upd <- 
+  parameters::equivalence_test(x = lmer_mod13, # mixed-effects multiple regression
+                               range = c(ub_sesoi, lb_sesoi),
+                               effects = c("fixed", "random"))
+
+print(equiv_test_upd)
+plot(equiv_test_upd)
 ```
 
 # END OF ANALYSIS SCRIPT
