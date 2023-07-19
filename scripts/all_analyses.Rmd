@@ -47,6 +47,9 @@ library(see) # 0.7.4
 # limit sceintifc notation
 options(scipen = 999)
 
+# useful function
+`%notin%` <- negate(`%in%`)
+
 ```
 
 ## Load data
@@ -302,6 +305,8 @@ trackloss_updated_training <- trackloss_analysis(response_window_updated_trainin
 data_updated_training <- clean_by_trackloss(data = response_window_updated_training,
                                    trial_prop_thresh = (1 - 750/(11000 - 3700))) # Need at least 750ms looking = 750/(11000 - 3700) divide by trial length
 
+not_enough_training_data_ids <- response_window_updated_training %>% distinct(id) %>% anti_join(data_updated_training %>% distinct(id))
+
 #------------------Test
 
 n_pre_trackloss_updated <- n_distinct(response_window_updated_test$id)
@@ -319,12 +324,17 @@ data_updated_test <- clean_by_trackloss(data = response_window_updated_test,
 ```{r final_sample_trad}
 
 #-------------------------------------------------Traditional
+
+#-----------------------First, update final dataset
+data_trad_test <- data_trad_test %>%
+  filter(id %notin% not_enough_training_data_ids$id)
+  
 #-----------------------Get final sample IDs
 final_sample_ids_trad <- data_trad_test %>% 
   select(id, experiment, condition) %>% 
   distinct() %>% 
   mutate(id = as.character(id)) %>% 
-  ungroup()
+  ungroup() 
 
 final_sample_trad <- final_sample_ids_trad %>%
   left_join(participants, by = c("id" = "recording_name"))
@@ -339,14 +349,15 @@ final_sample_ids_updated <- data_updated_test %>%
   select(id, experiment, condition) %>% 
   distinct() %>% 
   mutate(id = as.character(id)) %>% 
-  ungroup()
+  ungroup() %>%
+  filter(id %notin% not_enough_training_data_ids$id)
 
 final_sample_updated <- final_sample_ids_updated %>%
   left_join(participants, by = c("id" = "recording_name"))
 
 ```
 ### Make T-test datasets
-#### Traditional
+#### Traditional only
 ```{r ttest_data}
 
 #-------------------------------------------------t-tests data
@@ -445,6 +456,7 @@ baseline_preference_updated <- prename_data_updated_test %>%
 ```
 
 ### Make lmer datasets
+#### Updated only
 
 ```{r data_updated}
 
@@ -583,6 +595,19 @@ final_sample_trad %>%
             max_days = floor((max_age - max_months) * 30.436875),            
             num_female = sum(gender_written == "female")) %>%
   select(-avg_age_days, -min_age_days, -max_age_days, -avg_age, -min_age, -max_age)
+
+#------------------Exposure to langauges
+
+final_sample_trad %>%
+  ungroup() %>%
+  select(id, lang_group, dom_lang, best_lang, per_eng, per_fr, per_other) %>%
+  distinct() %>%
+  group_by(lang_group, dom_lang) %>%
+  summarize(per_en = mean(per_eng, na.rm = TRUE),
+            num = length(unique(id)),
+            per_fr = mean(per_fr, na.rm = TRUE),
+            per_other = mean(per_other, na.rm = TRUE)) %>%
+  mutate(per_en_and_fr = per_en + per_fr)
 
 #------------------Means by experiment
 data_ttest_trad_test %>%
@@ -833,6 +858,14 @@ data_ttest_trad_test %>%
             n =n()) %>%
   arrange(desc(n))
 
+
+#-----------------------Experiment, target_word, familiarity, condition means
+data_ttest_trad_test %>%
+  group_by(experiment, target_word, familiarity, condition) %>%
+  summarize(mean = mean(Mean),
+            n =n()) %>%
+  arrange(desc(n))
+
 ```
 
 ### t-tests preference corrected
@@ -874,7 +907,7 @@ data_ttest_trad_test %>%
   do(broom::tidy(t.test(.$compare_value , mu = 0, data = .))) %>%
   mutate(cohen_d = statistic/sqrt(parameter +1)) 
 
-#-------------------------------------------------Data pooled, prop looking minus prename preference against zero
+#-------------------------------------------------Data pooled, prop looking minus prename preference against zero (overall, pooled, yes kids are learning, DV is slightly above zero)
 data_ttest_trad_test %>%
   left_join(baseline_preference_trad, by = "id") %>% 
   mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
@@ -882,11 +915,11 @@ data_ttest_trad_test %>%
   do(broom::tidy(t.test(.$compare_value, mu = 0, data = .))) %>%
   mutate(cohen_d = statistic/sqrt(parameter +1)) 
 
-#-------------------------------------------------Split by target word, prop looking minus prename preference against zero
+#-------------------------------------------------Split by target word, prop looking minus prename preference against zero ()
 data_ttest_trad_test %>%
   left_join(baseline_preference_trad, by = "id") %>% 
   mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
-                                   target_word == "bos" ~ Mean - preference_bos)) %>%
+                                   target_word == "bos" ~ Mean - preference_bos)) %>% 
   group_by(target_word) %>%
   do(broom::tidy(t.test(.$compare_value, mu = 0, data = .))) %>%
   mutate(cohen_d = statistic/sqrt(parameter +1)) 
@@ -946,6 +979,15 @@ data_ttest_trad_test %>%
             sd_compare_value = sd(compare_value),
             n = length(unique(id)))
 
+#-----------------------Overall means
+
+data_ttest_trad_test %>%
+  left_join(baseline_preference_trad, by = "id") %>% 
+  mutate(compare_value = case_when(target_word == "kem" ~ Mean - preference_kem,
+                                   target_word == "bos" ~ Mean - preference_bos)) %>%
+  summarize(mean = mean(compare_value),
+            sd = sd(compare_value))
+
 ```
 
 ## Updated
@@ -997,17 +1039,19 @@ lmer_maximal_looking <- lme4::lmer(Prop - .5 ~ total_looking_time_training + (ta
 lmer_maximal_condition <- lme4::lmer(Prop - .5 ~ condition + (target_word|id), 
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
+summary(lmer_null)
+
 summary(lmer_maximal_exposure)
-ranef(lmer_maximal_exposure) 
+#ranef(lmer_maximal_exposure) 
 
 summary(lmer_maximal_vocab)
-ranef(lmer_maximal_vocab) 
+#ranef(lmer_maximal_vocab) 
 
 summary(lmer_maximal_looking)
-ranef(lmer_maximal_looking)
+#ranef(lmer_maximal_looking)
 
 summary(lmer_maximal_condition)
-ranef(lmer_maximal_condition)
+#ranef(lmer_maximal_condition)
 
 ```
 
@@ -1029,16 +1073,16 @@ lmer_rand_it_id_condition <- lme4::lmer(Prop - .5 ~ condition + (1|target_word) 
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
 summary(lmer_rand_it_id_exposure)
-ranef(lmer_rand_it_id_exposure) 
+#ranef(lmer_rand_it_id_exposure) 
 
 summary(lmer_rand_it_id_vocab)
-ranef(lmer_rand_it_id_vocab) 
+#ranef(lmer_rand_it_id_vocab) 
 
 summary(lmer_rand_it_id_looking)
-ranef(lmer_rand_it_id_looking) 
+#ranef(lmer_rand_it_id_looking) 
 
 summary(lmer_rand_it_id_condition)
-ranef(lmer_rand_it_id_condition) 
+#ranef(lmer_rand_it_id_condition) 
 
 
 #-------------------------------------------------Random intercept: id only
@@ -1056,16 +1100,16 @@ lmer_rand_id_condition <- lme4::lmer(Prop - .5 ~ condition + (1|id),
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
 summary(lmer_rand_id_exposure)
-ranef(lmer_rand_id_exposure)
+#ranef(lmer_rand_id_exposure)
 
 summary(lmer_rand_id_vocab)
-ranef(lmer_rand_id_vocab) 
+#ranef(lmer_rand_id_vocab) 
 
 summary(lmer_rand_id_looking)
-ranef(lmer_rand_id_looking) 
+#ranef(lmer_rand_id_looking) 
 
 summary(lmer_rand_id_condition)
-ranef(lmer_rand_id_condition) 
+#ranef(lmer_rand_id_condition) 
 
 
 ```
@@ -1093,16 +1137,16 @@ lmer_maximal_condition_cor <- lme4::lmer(difference_score ~ condition + (target_
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
 summary(lmer_maximal_exposure_cor)
-ranef(lmer_maximal_exposure_cor) 
+#ranef(lmer_maximal_exposure_cor) 
 
 summary(lmer_maximal_vocab_cor)
-ranef(lmer_maximal_vocab_cor) 
+#ranef(lmer_maximal_vocab_cor) 
 
 summary(lmer_maximal_looking_cor)
-ranef(lmer_maximal_looking_cor)
+#ranef(lmer_maximal_looking_cor)
 
 summary(lmer_maximal_condition_cor)
-ranef(lmer_maximal_condition_cor)
+#ranef(lmer_maximal_condition_cor)
 
 ```
 
@@ -1124,16 +1168,16 @@ lmer_rand_it_id_condition_cor <- lme4::lmer(difference_score ~ condition + (1|ta
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
 summary(lmer_rand_it_id_exposure_cor)
-ranef(lmer_rand_it_id_exposure_cor) 
+#ranef(lmer_rand_it_id_exposure_cor) 
 
 summary(lmer_rand_it_id_vocab_cor)
-ranef(lmer_rand_it_id_vocab_cor) 
+#ranef(lmer_rand_it_id_vocab_cor) 
 
 summary(lmer_rand_it_id_looking_cor)
-ranef(lmer_rand_it_id_looking_cor) 
+#ranef(lmer_rand_it_id_looking_cor) 
 
 summary(lmer_rand_it_id_condition_cor)
-ranef(lmer_rand_it_id_condition_cor) 
+#ranef(lmer_rand_it_id_condition_cor) 
 
 #-------------------------------------------------Random intercept: id only
 
@@ -1150,16 +1194,16 @@ lmer_rand_id_condition_cor <- lme4::lmer(difference_score ~ condition + (1|id),
                         data = data_lmer_updated_test_by_trial) # singularity warning
 
 summary(lmer_rand_id_exposure_cor)
-ranef(lmer_rand_id_exposure_cor)
+#ranef(lmer_rand_id_exposure_cor)
 
 summary(lmer_rand_id_vocab_cor)
-ranef(lmer_rand_id_vocab_cor) 
+#ranef(lmer_rand_id_vocab_cor) 
 
 summary(lmer_rand_id_looking_cor)
-ranef(lmer_rand_id_looking_cor) 
+#ranef(lmer_rand_id_looking_cor) 
 
 summary(lmer_rand_id_condition_cor)
-ranef(lmer_rand_id_condition_cor) 
+#ranef(lmer_rand_id_condition_cor) 
 
 
 ```
@@ -1184,21 +1228,34 @@ lmer_rand_it_condition <- lme4::lmer(Prop - .5 ~ condition + (1|target_word),
                         data = data_lmer_updated_test_by_trial) 
 
 summary(lmer_rand_it_exposure)
-ranef(lmer_rand_it_exposure)
+#ranef(lmer_rand_it_exposure)
 
 summary(lmer_rand_it_vocab)
-ranef(lmer_rand_it_vocab) 
+#ranef(lmer_rand_it_vocab) 
 
 summary(lmer_rand_it_looking)
-ranef(lmer_rand_it_looking) 
+#ranef(lmer_rand_it_looking) 
 
 summary(lmer_rand_it_condition)
-ranef(lmer_rand_it_condition) 
+#ranef(lmer_rand_it_condition) 
 
 #---------------------------All predictors
 
 lmer_rand_it_all <- lme4::lmer(Prop - .5 ~ per_exposure_target + vocab_target + total_looking_time_training + (1|target_word), 
                         data = data_lmer_updated_test_by_trial)
+
+summary(lmer_rand_it_all)
+
+#with target word as predictor
+
+lmer_rand_id_all <- lme4::lmer(Prop - .5 ~ target_word + per_exposure_target + vocab_target + total_looking_time_training + (1|id), 
+                        data = data_lmer_updated_test_by_trial) #Singular fit
+
+#Simple linear model instead
+
+lm_all <- lm(difference_score ~ target_word + per_exposure_target + vocab_target + total_looking_time_training, 
+             data = data_lmer_updated_test_by_trial)
+summary(lm_all)
 
 #---------------------------separate models for each condition
 lmer_exposure_two_lang <- 
@@ -1288,6 +1345,14 @@ lmer_exposure_one_lang_all_cor <-
   lme4::lmer(difference_score ~ per_exposure_target + (1|target_word), 
                          data = .) # singular fit  
 
+#---------------------------Simple Linear Model
+
+lm_target_word <-
+  data_lmer_updated_test_by_trial %>%
+  lm(difference_score ~ target_word + per_exposure_target + vocab_target + total_looking_time_training, data = .)
+
+summary(lm_target_word)
+
 ```
 
 ### Model tables
@@ -1295,6 +1360,14 @@ lmer_exposure_one_lang_all_cor <-
 #### Uncorrected
 ```{r model_tables_updated_uncorrected}
 
+#intercept-only
+
+tab_model(lmer_null,
+          show.re.var = T,
+          show.icc = T,
+          title = "Intercept Only"#,
+          #file = here("figures/table_lmer_exposure.doc")
+          )
 
 tab_model(lmer_rand_it_exposure,
           show.re.var = T,
@@ -1340,6 +1413,13 @@ tab_model(lmer_exposure_two_lang, lmer_exposure_one_lang_all,
           title = "Exposure to target (%): 2-lang, 1-lang"#,
           #file = here("figures/table_lmer_exposur_by_conditione.doc")
           )
+
+# simple model
+tab_model(lm_target_word)
+
+apaTables::apa.reg.table(lm_target_word,
+                         #filename = here("figures/lm_table.rtf")
+                         )
 
 ```
 
@@ -1550,15 +1630,15 @@ plot_perc <-
   mutate(condition = case_when(str_detect(condition, "single_lang") ~ "Single language",
                           str_detect(condition, "dual_lang") ~ "Dual language")) %>%
   ggplot(aes(x = per_exposure_target, y = difference_score)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  geom_point(alpha = .15, color = cbPalette[7], shape = 16, stroke = 0, size = 2.25) +
+  geom_smooth(method = "lm", alpha = .25, color = cbPalette[7], fill = cbPalette[7]) +
   ylim(c(-1, 1)) +
   labs(x = "Exposure to sentence frame languages (%)",
-       y = "Proportion of looking to correct object") +
-  facet_wrap(~ condition) + # split by condition 
+       y = "Proportion looking to correct object\nminus baseline looking preference") +
+  #facet_wrap(~ condition) + # split by condition 
   theme_bw(base_size = 18) + 
-  theme(axis.text.x = element_text(size = 10),
-        axis.text.y = element_text(size = 10),
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
         plot.title = element_text(hjust = 0.5),
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank())
@@ -1573,15 +1653,15 @@ plot_vocab <-
   mutate(condition = case_when(str_detect(condition, "single_lang") ~ "Single language",
                           str_detect(condition, "dual_lang") ~ "Dual language")) %>%
   ggplot(aes(x = vocab_target, y = difference_score)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  geom_point(alpha = 0.15, color = cbPalette[6], shape = 16, stroke = 0, size = 2.25) +
+  geom_smooth(method = "lm", alpha = .25, color = cbPalette[6], fill = cbPalette[6]) +
   ylim(c(-1, 1)) +
   labs(x = "Vocabulary in sentence frame languages (n)",
-       y = "Proportion of looking to correct object") +
-  facet_wrap(~ condition) + # split by condition
+       y = "Proportion looking to correct object\nminus baseline looking preference") +
+  #facet_wrap(~ condition) + # split by condition
   theme_bw(base_size = 18) + 
-  theme(axis.text.x = element_text(size = 10),
-        axis.text.y = element_text(size = 10),
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
         plot.title = element_text(hjust = 0.5),
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank())
@@ -1596,16 +1676,16 @@ plot_training <-
   mutate(condition = case_when(str_detect(condition, "single_lang") ~ "Single language",
                           str_detect(condition, "dual_lang") ~ "Dual language"))  %>%
   ggplot(aes(x = total_looking_time_training, y = difference_score)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", alpha = 0.7, color = "black") +
+  geom_point(alpha = 0.15, color = cbPalette[4], shape = 16, stroke = 0, size = 2.25) +
+  geom_smooth(method = "lm", alpha = .25, color = cbPalette[4], fill = cbPalette[4]) +
   ylim(c(-1, 1)) +
   xlim(c(0, 50000)) +
   labs(x = "Total looking time during training (ms)",
-       y = "Proportion of looking to correct object") +
-  facet_wrap(~ condition) + # split by condition
+       y = "Proportion looking to correct object\nminus baseline looking preference") +
+  #facet_wrap(~ condition) + # split by condition
   theme_bw(base_size = 18) + 
-  theme(axis.text.x = element_text(size = 10),
-        axis.text.y = element_text(size = 10),
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
         plot.title = element_text(hjust = 0.5),
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank())
@@ -1614,13 +1694,51 @@ plot_training <-
 
 plot_training
 
+# Kem vs Bos
+
+kembos_summary <- data_lmer_updated_test_by_trial %>%
+  rename(mean = difference_score) %>%
+  group_by(target_word) %>%
+  summarize(difference_score = mean(mean, na.rm = TRUE), 
+            sd = sd(mean, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se = sd/sqrt(n),
+         xmin = row_number() - .25,
+         xmax = row_number() + .25)
+
+plot_kembos <- 
+  data_lmer_updated_test_by_trial %>% 
+  ggplot(aes(x = target_word, y = difference_score)) +
+  geom_jitter(aes(color = target_word), alpha = 0.2, shape = 16, stroke = 0, size = 2.25) +
+  geom_errorbar(data = kembos_summary, aes(ymin = difference_score - se, ymax = difference_score + se), width = .2, color = "black") +
+  stat_summary(aes(color = target_word), geom = "point", fun.y = "mean", shape = 16, stroke = 0, size = 2.25, alpha = 1) +
+  ylim(c(-1, 1)) +
+  labs(x = "Target word",
+       y = "Proportion looking to correct object\nminus baseline looking preference") +
+  scale_color_manual(values = c(cbPalette[8], cbPalette[5])) +
+  scale_fill_manual(values = c(cbPalette[8], cbPalette[5])) +
+  theme_bw(base_size = 18) + 
+  theme(axis.text.x = element_text(size = 12),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.position = "none") 
+
+#ggsave(here("figures/looking_by_target_word.png"), width = 12, height = 7, dpi = 300)
+
+plot_kembos
+
 # plot join
 plot_join <- 
-(plot_perc + theme(legend.position = "none") | plot_vocab + theme(axis.title.y = element_blank(), axis.text.y = element_blank())) / plot_training + plot_annotation(tag_levels = 'A')
+(plot_perc + theme(legend.position = "none") | plot_vocab + theme(axis.title.y = element_blank(), axis.text.y = element_blank())) / (plot_training | plot_kembos + theme(axis.title.y = element_blank(), axis.text.y = element_blank())) + plot_annotation(tag_levels = 'A')
 
 plot_join
 
-#ggsave(here("figures/plot_joint.png"), width = 14, height = 10, dpi = 300)
+#ggsave(here("figures/plot_joint_colorized.png"), width = 14, height = 10, dpi = 300)
+
+
 
 ```
 
@@ -1656,7 +1774,7 @@ d_stats <-
             sd = sd(mean_prop, na.rm = T),
             chance_level = 0.5,
             d = (mean - chance_level)/sd,
-            n = 148, #HK updated this
+            n = n_distinct(data_lmer_updated_test_by_trial$id), #HK updated this
             alpha = 0.05,
             z_crit = qnorm(1-alpha/2),
             se = sqrt(1/n + d^2/(2*n)),
