@@ -1771,15 +1771,15 @@ excl_data <- participants %>%
 excl_data_plot <- excl_data %>%
   count(recruited, excl_reason, trad_sample, up_sample)
 
-ggplot(data = excl_data_plot,
-       aes(axis1 = recruited, axis2 = excl_reason, axis3 = trad_sample, axis4 = up_sample, y = n)) +
-  geom_alluvium(aes(fill = up_sample)) +
-  geom_stratum() +
-  geom_text(stat = "stratum",
-            aes(label = after_stat(stratum))) +
-  scale_x_discrete(limits = c("Survey", "Response"),
-                   expand = c(0.15, 0.05)) +
-  theme_void()
+# ggplot(data = excl_data_plot,
+#        aes(axis1 = recruited, axis2 = excl_reason, axis3 = trad_sample, axis4 = up_sample, y = n)) +
+#   geom_alluvium(aes(fill = up_sample)) +
+#   geom_stratum() +
+#   geom_text(stat = "stratum",
+#             aes(label = after_stat(stratum))) +
+#   scale_x_discrete(limits = c("Survey", "Response"),
+#                    expand = c(0.15, 0.05)) +
+#   theme_void()
 
 
 ```
