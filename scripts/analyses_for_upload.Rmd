@@ -45,7 +45,7 @@ options(scipen = 999)
 ```
 #1.1. Load dataset
 ```{r}
-load(here("data/2022-02-10_data_ready_for_analysis.Rda"))
+load(here("data/2023-05-16_data_ready_for_analysis.Rda"))
 #write.csv(dataset, file = "data_ready_for_analysis.csv") # generates a 1.6GB file
 
 dataset <- dataset %>%

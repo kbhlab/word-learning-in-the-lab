@@ -298,15 +298,6 @@ data_trad_test <- response_window_trad_test %>%
 
 #-------------------------------------------------Updated
 
-#------------------Training
-
-trackloss_updated_training <- trackloss_analysis(response_window_updated_training)
-
-data_updated_training <- clean_by_trackloss(data = response_window_updated_training,
-                                   trial_prop_thresh = (1 - 750/(11000 - 3700))) # Need at least 750ms looking = 750/(11000 - 3700) divide by trial length
-
-not_enough_training_data_ids <- response_window_updated_training %>% distinct(id) %>% anti_join(data_updated_training %>% distinct(id))
-
 #------------------Test
 
 n_pre_trackloss_updated <- n_distinct(response_window_updated_test$id)
@@ -325,10 +316,6 @@ data_updated_test <- clean_by_trackloss(data = response_window_updated_test,
 
 #-------------------------------------------------Traditional
 
-#-----------------------First, update final dataset
-data_trad_test <- data_trad_test %>%
-  filter(id %notin% not_enough_training_data_ids$id)
-  
 #-----------------------Get final sample IDs
 final_sample_ids_trad <- data_trad_test %>% 
   select(id, experiment, condition) %>% 
@@ -344,13 +331,13 @@ final_sample_trad <- final_sample_ids_trad %>%
 ```{r final_sample_updated}
 
 #-------------------------------------------------Updated
+
 #-----------------------Get final sample IDs
 final_sample_ids_updated <- data_updated_test %>% 
   select(id, experiment, condition) %>% 
   distinct() %>% 
   mutate(id = as.character(id)) %>% 
-  ungroup() %>%
-  filter(id %notin% not_enough_training_data_ids$id)
+  ungroup() 
 
 final_sample_updated <- final_sample_ids_updated %>%
   left_join(participants, by = c("id" = "recording_name"))
@@ -464,19 +451,20 @@ baseline_preference_updated <- prename_data_updated_test %>%
 # summary of total looking time during training for each participant on each trial
 data_lmer_updated_training_by_trial <- 
   data_updated_training %>% 
+  filter(trackloss == FALSE) %>% #valid rows only
   make_time_window_data(data = ., 
                         aois = "training_AOI",
                         predictor_columns = c("lang_group", "carrier_language", 
                                               "best_lang",
                                               "target_word"),
                         summarize_by = "id") %>% 
-  mutate(looking_time = SamplesInAOI * 16.6) # assuming 60Hz
+  mutate(looking_time = SamplesInAOI * (1000/60)) # assuming 60Hz
 
 ## summary by participant averaged across trials
 data_lmer_updated_training_by_participant <- 
   data_lmer_updated_training_by_trial %>% 
   group_by(id) %>% 
-  summarise(total_looking_time_training = mean(looking_time, na.rm = T))
+  summarise(total_looking_time_training = sum(looking_time, na.rm = T)) 
 
 #-------------------------------------------------Test
 
@@ -747,8 +735,9 @@ final_sample_ids_updated %>%
 #do t-test on dual language condition to see if any difference between looking time depending on stimulus language
 response_window_trad_training %>% 
   filter(condition == "dual_lang" & id %in% final_sample_ids_trad$id) %>%
+  filter(trackloss == FALSE) %>% # only count valid rows
   group_by(id, target_word, condition, lang_group, trial_number, familiarity, experiment) %>%
-  summarize(trial_length = length(id), #Check this
+  summarize(trial_length = length(id), #num valid rows
             looking_at_target = sum(training_AOI == TRUE, na.rm = TRUE),
             mean_looking_at_target = mean(training_AOI == TRUE, na.rm = TRUE)) %>% 
   ungroup() %>% 
@@ -815,6 +804,7 @@ data_ttest_trad_test %>%
 
 #-----------------------Difference in looking time training
 response_window_trad_training %>%
+  filter(trackloss == FALSE) %>% #only look at valid rows
   filter(condition == "dual_lang" & id %in% final_sample_ids_trad$id) %>%
   group_by(id, target_word, condition, lang_group, trial_number, familiarity, experiment) %>%
   summarize(trial_length = length(id),
@@ -1738,6 +1728,58 @@ plot_join
 
 #ggsave(here("figures/plot_joint_colorized.png"), width = 14, height = 10, dpi = 300)
 
+
+
+```
+
+## Exclusions
+```{r exclusion-plot}
+library(ggalluvial)
+
+trackloss_excl <- trackloss_trad_test %>% 
+  distinct(id) %>% 
+  filter(id %notin% response_window_trad_test$id) %>%
+  mutate(excl_reason = "Not enough looking data")
+
+missing_words <- response_window_trad_test %>% 
+  distinct(id) %>% 
+  filter(id %notin% data_trad_test$id) %>%
+  mutate(excl_reason = "No data for both words")
+
+excl_data <- participants %>%
+  mutate(excl_reason = str_to_sentence(reason_exclusion),
+         excl_reason = str_replace_all(excl_reason, "_", " "),
+         excl_reason = str_replace(excl_reason, " age", " age of"),
+         excl_reason = str_replace(excl_reason, "lang$", "language exposure"),
+         excl_reason = str_replace(excl_reason, "quential", "quential bilingual"),
+         excl_reason = str_replace(excl_reason, "Birth", "Low birth"),
+         excl_reason = str_replace(excl_reason, "Language", "Language criteria not met"),
+         excl_reason = str_replace(excl_reason, "Technical", "Technical issues"),
+         excl_reason = str_replace(excl_reason, "Interference", "Parental interference")) %>%
+  select(id = recording_name, excl_reason, keeper_new_analysis) %>%
+  filter(id %notin% missing_words$id) %>%
+  filter(id %notin% trackloss_excl$id) %>%
+  full_join(trackloss_excl) %>%
+  full_join(missing_words) %>%
+  mutate(trad_sample = case_when(is.na(excl_reason) ~ 1),
+         up_sample = case_when(trad_sample == 1 ~ 1,
+                               id == "NovelDom14_S36_45223" ~ 0,
+                               str_detect(excl_reason, "criteria") ~ 1,
+                               str_detect(excl_reason, "No data") ~ 1),
+         recruited = "Recruited and Tested")
+
+excl_data_plot <- excl_data %>%
+  count(recruited, excl_reason, trad_sample, up_sample)
+
+ggplot(data = excl_data_plot,
+       aes(axis1 = recruited, axis2 = excl_reason, axis3 = trad_sample, axis4 = up_sample, y = n)) +
+  geom_alluvium(aes(fill = up_sample)) +
+  geom_stratum() +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("Survey", "Response"),
+                   expand = c(0.15, 0.05)) +
+  theme_void()
 
 
 ```
